@@ -1,0 +1,53 @@
+name: Build installable APK
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Bundle offline Material UI
+        run: npm ci --no-audit --no-fund && npm run build:web
+      - name: Install browser for interface checks
+        run: npx playwright install --with-deps chromium
+      - name: Verify offline RSS and BLE bridge
+        run: npm test
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Android compile and lint
+        run: gradle --no-daemon :app:assembleDebug :app:lintDebug
+      - name: Prepare APK and checksum
+        run: |
+          mkdir -p deliverables
+          cp app/build/outputs/apk/debug/app-debug.apk deliverables/InkScreen-RSS-1.0.0.apk
+          cd deliverables
+          sha256sum InkScreen-RSS-1.0.0.apk > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: InkScreen-RSS-APK
+          path: deliverables/
+          retention-days: 30
+      - name: Upload validation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-reports
+          path: |
+            app/build/reports/lint-results-debug.html
+            test-results/
+          if-no-files-found: ignore

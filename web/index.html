@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>墨水屏文字直传</title>
+<style>
+/* ============================================================
+   设计变量
+   ============================================================ */
+:root{
+  /* 品牌与中性色 */
+  --brand:#3478F6;
+  --brand-600:#2b66db;
+  --brand-700:#2455c0;
+  --appbar-1:#3B82F6;
+  --appbar-2:#3374ea;
+  --bg:#FFFFFF;
+  --sidebar:#EEF1F5;
+  --card:#F5F7FA;
+  --card-white:#FFFFFF;
+  --border:#DFE3E8;
+  --border-strong:#CBD3DD;
+  --text:#242B36;
+  --text-2:#687385;
+  --text-3:#929BA8;
+  --sel:#DCE8F8;
+  --ok:#3f9d6f;
+  --warn:#c98a3c;
+  --err:#cf655c;
+
+  /* 圆角 / 间距 */
+  --r-card:12px;
+  --r-ctrl:8px;
+  --r-pill:999px;
+  --gap:14px;
+
+  /* 动效曲线 */
+  --ease-out:cubic-bezier(0.16,1,0.3,1);
+  --ease-in:cubic-bezier(0.4,0,1,1);
+  --ease-spring:cubic-bezier(0.34,1.45,0.64,1);
+  --ease-std:cubic-bezier(0.22,1,0.36,1);
+
+  /* 浮层阴影（仅浮层使用） */
+  --sh-pop:0 14px 32px -14px rgba(20,32,52,.28), 0 2px 6px rgba(20,32,52,.06);
+
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB","Noto Sans",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"Cascadia Mono",Consolas,monospace;
+}
+*,*::before,*::after{box-sizing:border-box;}
+html,body{height:100%;}
+body{
+  margin:0;font-family:var(--font);font-size:14px;line-height:1.5;color:var(--text);
+  background:var(--bg);-webkit-tap-highlight-color:transparent;
+  overflow:hidden;
+}
+h1,h2,h3,p{margin:0;}
+button{font-family:inherit;}
+::selection{background:var(--sel);color:var(--text);}
+/* 纤细滚动条 */
+*::-webkit-scrollbar{width:9px;height:9px;}
+*::-webkit-scrollbar-thumb{background:#cfd6df;border-radius:99px;border:2px solid transparent;background-clip:content-box;}
+*::-webkit-scrollbar-thumb:hover{background:#b6bfcc;background-clip:content-box;}
+*::-webkit-scrollbar-track{background:transparent;}
+
+/* ============================================================
+   顶层：品牌导航栏
+   ============================================================ */
+.appbar{
+  height:48px;flex:none;display:flex;align-items:center;gap:12px;
+  padding:0 14px;
+  background:linear-gradient(180deg,var(--appbar-1) 0%,var(--appbar-2) 100%);
+  color:#fff;
+  border-bottom:1px solid rgba(12,32,70,.14);
+  position:relative;z-index:30;
+}
+.brand{display:flex;align-items:center;gap:9px;min-width:0;}
+.brand-logo{
+  width:26px;height:26px;flex:none;border-radius:7px;
+  display:grid;place-items:center;font-size:14px;
+  background:rgba(255,255,255,.16);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.24);
+}
+.brand-name{font-size:14.5px;font-weight:600;letter-spacing:.2px;white-space:nowrap;}
+.brand-sub{
+  font-size:12px;color:rgba(255,255,255,.72);padding-left:10px;margin-left:2px;
+  border-left:1px solid rgba(255,255,255,.22);white-space:nowrap;
+}
+.appbar-status{
+  display:inline-flex;align-items:center;gap:7px;
+  padding:4px 12px;border-radius:var(--r-pill);
+  font-size:12px;font-weight:500;color:#fff;
+  background:rgba(255,255,255,.14);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);
+  transition:background .22s var(--ease-std);
+}
+.appbar-status .dot{
+  width:7px;height:7px;border-radius:50%;background:#ffd2a8;
+  box-shadow:0 0 0 3px rgba(255,210,168,.18);
+  transition:background .22s var(--ease-std),box-shadow .22s var(--ease-std);
+}
+.appbar-status.on{background:rgba(255,255,255,.22);}
+.appbar-status.on .dot{background:#8ff0c0;box-shadow:0 0 0 3px rgba(143,240,192,.2);}
+.appbar-status.busy .dot{background:#ffe08a;box-shadow:0 0 0 3px rgba(255,224,138,.22);}
+.appbar-right{margin-left:auto;display:flex;align-items:center;gap:8px;}
+.appbar-meta{
+  font-size:12px;color:rgba(255,255,255,.78);max-width:200px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+
+/* 顶栏按钮：半透明描边风格 */
+.tbtn{
+  height:30px;padding:0 13px;border-radius:var(--r-ctrl);
+  font-size:12.5px;font-weight:500;color:#fff;
+  background:rgba(255,255,255,.12);
+  border:1px solid rgba(255,255,255,.22);
+  cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+  transition:background .2s var(--ease-std),border-color .2s var(--ease-std),
+             transform .18s var(--ease-spring),opacity .2s var(--ease-std);
+}
+.tbtn:hover{background:rgba(255,255,255,.2);}
+.tbtn:active{transform:scale(.975);}
+.tbtn:disabled{opacity:.45;cursor:not-allowed;}
+.tbtn-primary{background:#fff;color:var(--brand-700);border-color:#fff;font-weight:600;}
+.tbtn-primary:hover{background:#f2f7ff;}
+
+/* ============================================================
+   主体：侧边栏 + 内容区
+   ============================================================ */
+.shell{display:flex;height:calc(100dvh - 48px);min-height:0;}
+
+.sidenav{
+  width:182px;flex:none;background:var(--sidebar);
+  border-right:1px solid var(--border);
+  display:flex;flex-direction:column;min-height:0;
+}
+.nav-scroll{flex:1;overflow-y:auto;padding:12px 10px;}
+.nav-group + .nav-group{margin-top:14px;padding-top:12px;border-top:1px solid var(--border);}
+.nav-label{
+  font-size:11.5px;font-weight:600;color:var(--text-3);
+  letter-spacing:.6px;padding:0 10px 7px;
+}
+.nav-item{
+  position:relative;width:100%;height:36px;
+  display:flex;align-items:center;gap:9px;
+  padding:0 12px;margin-bottom:2px;
+  border:none;border-radius:var(--r-ctrl);
+  background:transparent;color:var(--text-2);
+  font-size:13px;font-weight:500;text-align:left;cursor:pointer;
+  transition:background .22s var(--ease-std),color .22s var(--ease-std),
+             transform .2s var(--ease-spring);
+}
+.nav-item .ico{font-size:13px;width:16px;text-align:center;color:var(--text-3);transition:color .22s var(--ease-std);}
+.nav-item::before{
+  content:"";position:absolute;left:3px;top:50%;
+  width:3px;height:0;border-radius:2px;background:var(--brand);
+  transform:translateY(-50%);
+  transition:height .26s var(--ease-out);
+}
+.nav-item:hover{background:#e6ebf1;color:var(--text);}
+.nav-item:active{transform:scale(.985);}
+.nav-item.active{background:var(--sel);color:var(--brand-700);font-weight:600;}
+.nav-item.active .ico{color:var(--brand);}
+.nav-item.active::before{height:16px;}
+.nav-footer{
+  flex:none;padding:10px 12px 12px;border-top:1px solid var(--border);
+  display:flex;flex-direction:column;gap:8px;
+}
+.switch-row{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  font-size:12.5px;color:var(--text-2);cursor:pointer;user-select:none;
+}
+.switch{position:relative;width:36px;height:20px;flex:none;}
+.switch input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer;z-index:2;}
+.switch i{
+  position:absolute;inset:0;border-radius:var(--r-pill);background:#cfd6df;
+  transition:background .24s var(--ease-std);
+}
+.switch i::after{
+  content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 2px rgba(20,32,52,.28);
+  transition:transform .26s var(--ease-spring);
+}
+.switch input:checked + i{background:var(--brand);}
+.switch input:checked + i::after{transform:translateX(16px);}
+.nav-hint{font-size:11.5px;color:var(--text-3);line-height:1.45;}
+
+.workspace{
+  flex:1;min-width:0;background:var(--bg);
+  overflow-y:auto;overflow-x:hidden;
+  padding:20px 26px 26px;
+  scroll-behavior:smooth;
+}
+.page-head{
+  display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;
+  padding-bottom:14px;margin-bottom:var(--gap);
+  border-bottom:1px solid var(--border);
+}
+.page-head h1{font-size:17px;font-weight:600;letter-spacing:.2px;}
+.page-head p{font-size:12.5px;color:var(--text-2);margin-top:3px;}
+.page-head .spacer{flex:1;}
+.page-actions{display:flex;gap:8px;}
+
+/* ============================================================
+   卡片
+   ============================================================ */
+.grid{
+  display:grid;grid-template-columns:minmax(0,1fr) 372px;
+  gap:var(--gap);align-items:start;
+}
+.col-right{display:flex;flex-direction:column;gap:var(--gap);min-width:0;}
+
+.card{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:var(--r-card);
+  padding:16px 18px 18px;
+  animation:cardIn .42s var(--ease-out) both;
+}
+@keyframes cardIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+.card-head{display:flex;align-items:center;gap:8px;margin-bottom:13px;}
+.card-head h2{font-size:14.5px;font-weight:600;color:var(--text);}
+.card-head .hint{font-size:12px;color:var(--text-3);}
+.card-head .spacer{flex:1;}
+
+/* 通用小按钮（桌面尺寸） */
+.btn{
+  height:34px;padding:0 14px;border-radius:var(--r-ctrl);
+  font-size:13px;font-weight:500;color:var(--text);
+  background:var(--card-white);border:1px solid var(--border);
+  cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  transition:background .2s var(--ease-std),border-color .2s var(--ease-std),
+             color .2s var(--ease-std),transform .18s var(--ease-spring),
+             box-shadow .22s var(--ease-std);
+}
+.btn:hover{background:#fff;border-color:var(--border-strong);box-shadow:0 2px 6px rgba(20,32,52,.07);}
+.btn:active{transform:scale(.977);}
+.btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none;}
+.btn-soft{background:#eef3fb;border-color:#dbe4f2;color:var(--brand-700);}
+.btn-soft:hover{background:#e6eefb;border-color:#c8d8ee;}
+
+/* 主行动按钮：胶囊（品牌标志动作，仅此一处使用胶囊） */
+.btn-pill{
+  height:42px;padding:0 26px;border-radius:var(--r-pill);
+  font-size:14px;font-weight:600;color:#fff;
+  background:var(--brand);border:1px solid var(--brand);
+  cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  box-shadow:0 6px 14px -8px rgba(52,120,246,.9);
+  transition:background .2s var(--ease-std),transform .2s var(--ease-spring),
+             box-shadow .24s var(--ease-std),opacity .2s var(--ease-std);
+}
+.btn-pill:hover{background:var(--brand-600);box-shadow:0 10px 20px -10px rgba(52,120,246,.95);}
+.btn-pill:active{transform:scale(.975);}
+.btn-pill:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;}
+
+/* 分段控件（胶囊） */
+.seg{
+  display:inline-flex;padding:3px;gap:2px;
+  background:#e8edf4;border-radius:var(--r-pill);
+  border:1px solid var(--border);
+}
+.seg button{
+  height:26px;padding:0 13px;border:none;border-radius:var(--r-pill);
+  background:transparent;color:var(--text-2);
+  font-size:12.5px;font-weight:500;cursor:pointer;
+  transition:background .24s var(--ease-out),color .24s var(--ease-out),
+             box-shadow .24s var(--ease-out),transform .2s var(--ease-spring);
+}
+.seg button:hover{color:var(--text);}
+.seg button.on{
+  background:#fff;color:var(--brand-700);font-weight:600;
+  box-shadow:0 1px 3px rgba(20,32,52,.14);
+}
+
+/* ============================================================
+   编辑区
+   ============================================================ */
+.editor-card{display:flex;flex-direction:column;min-height:min(640px,calc(100dvh - 230px));transition:none;}
+.sheet-handle{display:none;}
+
+/* RSS 自动填充 */
+.rss-bar{
+  display:flex;flex-direction:column;gap:8px;
+  padding:10px 12px;border:1px solid var(--border);border-radius:var(--r-ctrl);
+  background:var(--card-white);
+}
+.rss-bar .switch-row{font-size:12.5px;color:var(--text-2);}
+.rss-source{display:flex;gap:8px;align-items:center;}
+.rss-source[hidden],.rss-status[hidden]{display:none !important;}
+.rss-source input[type="text"]{flex:1;min-width:0;height:32px;font-size:12.5px;}
+.rss-source .btn{height:32px;padding:0 12px;flex:none;}
+.rss-status{font-size:11.5px;color:var(--text-3);line-height:1.45;}
+.rss-status.ok{color:var(--ok);}
+.rss-status.err{color:var(--err);}
+.editor-body{
+  display:flex;flex-direction:column;gap:12px;flex:1;min-height:0;
+  /* 二级滚动条：编辑区被拖矮时在内部滚动，不与底部动作条重叠 */
+  overflow-y:auto;overflow-x:hidden;padding-right:2px;
+}
+.field{display:flex;flex-direction:column;gap:6px;min-height:0;}
+.field.grow{flex:1;}
+.flabel{
+  display:flex;align-items:baseline;gap:8px;
+  font-size:12.5px;font-weight:600;color:var(--text-2);
+}
+.fhint{font-size:11.5px;font-weight:400;color:var(--text-3);}
+
+input[type="text"],textarea,select{
+  width:100%;font-family:inherit;font-size:13.5px;color:var(--text);
+  background:var(--card-white);
+  border:1px solid var(--border);border-radius:var(--r-ctrl);
+  outline:none;
+  transition:border-color .22s var(--ease-std),box-shadow .22s var(--ease-std),background .22s var(--ease-std);
+}
+input[type="text"]{height:36px;padding:0 11px;}
+textarea{padding:9px 11px;line-height:1.6;resize:none;flex:1;min-height:160px;font-size:14px;}
+input[type="text"]:focus,textarea:focus,select:focus{
+  border-color:var(--brand);
+  box-shadow:0 0 0 3px rgba(52,120,246,.14);
+}
+input[type="text"]::placeholder,textarea::placeholder{color:var(--text-3);}
+select{
+  height:34px;padding:0 30px 0 10px;font-size:13px;cursor:pointer;
+  appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23687385'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 10px center;background-size:10px 6px;
+}
+
+/* 行样式 */
+.line-styles{display:flex;flex-direction:column;gap:6px;}
+.line-styles:empty{display:none;}
+.line-style-row{display:flex;align-items:center;gap:8px;}
+.line-style-row .ln{flex:none;width:48px;font-size:12px;color:var(--text-3);}
+.line-style-row select{height:32px;font-size:12.5px;}
+
+/* 工具条 */
+.tools{
+  display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;
+  padding-top:12px;border-top:1px solid var(--border);
+}
+.tool{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-2);}
+.tool select{width:auto;min-width:112px;}
+.tool select.wide{min-width:184px;}
+input[type="range"]{
+  -webkit-appearance:none;appearance:none;width:104px;height:26px;background:transparent;cursor:pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track{
+  height:4px;border-radius:99px;background:#dbe1ea;
+}
+input[type="range"]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:14px;height:14px;border-radius:50%;
+  background:#fff;border:1px solid var(--border-strong);margin-top:-5px;
+  box-shadow:0 1px 3px rgba(20,32,52,.22);
+  transition:border-color .2s var(--ease-std),box-shadow .2s var(--ease-std),transform .2s var(--ease-spring);
+}
+input[type="range"]:hover::-webkit-slider-thumb{border-color:var(--brand);}
+input[type="range"]:active::-webkit-slider-thumb{transform:scale(1.08);border-color:var(--brand);}
+input[type="range"]::-moz-range-track{height:4px;border-radius:99px;background:#dbe1ea;}
+input[type="range"]::-moz-range-thumb{width:13px;height:13px;border:1px solid var(--border-strong);border-radius:50%;background:#fff;}
+
+/* 底部动作条：普通流式页脚，不再浮在内容上 */
+.editor-actions{
+  flex:none;display:flex;align-items:center;gap:12px;
+  margin:12px -18px -18px;padding:12px 18px 14px;
+  background:var(--card);
+  border-top:1px solid var(--border);
+  border-radius:0 0 var(--r-card) var(--r-card);
+}
+/* 编辑区被拖到很矮时隐藏动作条，只保留标题行 */
+.editor-card.compact .editor-actions{display:none;}
+.editor-card.compact{min-height:0;}
+.status-line{flex:1;min-width:0;font-size:12px;color:var(--text-2);}
+.status-line b{color:var(--text);font-weight:600;}
+.progress{
+  height:4px;border-radius:99px;background:#e2e8f0;overflow:hidden;
+  margin-bottom:7px;opacity:0;transition:opacity .24s var(--ease-std);
+}
+.progress.show{opacity:1;}
+.progress > i{
+  display:block;height:100%;width:0%;border-radius:99px;
+  background:var(--brand);
+  transition:width .16s var(--ease-std);
+}
+
+/* ============================================================
+   预览与信息
+   ============================================================ */
+.preview-box{
+  display:flex;justify-content:center;align-items:center;
+  background:var(--card-white);border:1px solid var(--border);
+  border-radius:var(--r-ctrl);padding:10px;min-height:96px;
+}
+#fb{
+  max-width:100%;max-height:236px;width:auto;height:auto;display:block;
+  border-radius:3px;background:#fff;image-rendering:pixelated;
+  box-shadow:0 1px 4px rgba(20,32,52,.12);
+}
+.preview-meta{
+  display:flex;justify-content:space-between;gap:10px;margin-top:8px;
+  font-size:11.5px;color:var(--text-3);
+}
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:11px;}
+.info-item{
+  background:var(--card-white);border:1px solid var(--border);
+  border-radius:var(--r-ctrl);padding:8px 10px;min-width:0;
+}
+.info-item .k{font-size:11.5px;color:var(--text-3);}
+.info-item .v{
+  font-size:13px;font-weight:600;color:var(--text);margin-top:2px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+
+/* ============================================================
+   控制器
+   ============================================================ */
+.ctrl-group + .ctrl-group{margin-top:13px;padding-top:13px;border-top:1px solid var(--border);}
+.ctrl-title{font-size:11.5px;font-weight:600;color:var(--text-3);letter-spacing:.5px;margin-bottom:8px;}
+.chip-row{display:flex;flex-wrap:wrap;gap:7px;}
+.chip{
+  height:32px;padding:0 12px;border-radius:var(--r-ctrl);
+  font-size:12.5px;font-weight:500;color:var(--text);
+  background:var(--card-white);border:1px solid var(--border);
+  cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+  transition:background .2s var(--ease-std),border-color .2s var(--ease-std),
+             color .2s var(--ease-std),transform .18s var(--ease-spring),
+             box-shadow .22s var(--ease-std);
+}
+.chip:hover{background:#fff;border-color:#c3d4f2;color:var(--brand-700);box-shadow:0 2px 6px rgba(52,120,246,.12);}
+.chip:active{transform:scale(.975);}
+.chip:disabled{opacity:.42;cursor:not-allowed;box-shadow:none;}
+.chip.accent{background:#eaf1fe;border-color:#c9dbfa;color:var(--brand-700);font-weight:600;}
+.chip.accent:hover{background:#e0ebfd;border-color:#b5cdf7;}
+.sleep-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:8px;}
+.sleep-row input[type="text"]{width:60px;height:32px;flex:none;text-align:center;padding:0 8px;font-size:13px;}
+.sleep-row .lbl,.sleep-row .sep{font-size:12px;color:var(--text-3);}
+
+/* ============================================================
+   日志
+   ============================================================ */
+#log{
+  height:124px;overflow-y:auto;
+  background:var(--card-white);border:1px solid var(--border);border-radius:var(--r-ctrl);
+  padding:8px 10px;font-family:var(--mono);font-size:11.5px;line-height:1.7;color:#3b4553;
+}
+#log .t{color:var(--text-3);margin-right:6px;}
+#log .err{color:var(--err);font-weight:600;}
+#log .ok{color:var(--ok);font-weight:600;}
+
+/* ============================================================
+   浮层提示
+   ============================================================ */
+.toast-wrap{
+  position:fixed;left:50%;bottom:24px;transform:translateX(-50%);
+  z-index:90;display:flex;flex-direction:column;gap:8px;align-items:center;
+  pointer-events:none;
+}
+.toast{
+  padding:9px 16px;border-radius:var(--r-pill);
+  font-size:12.5px;font-weight:500;color:#fff;
+  background:rgba(36,43,54,.94);
+  box-shadow:var(--sh-pop);
+  animation:toastIn .24s var(--ease-out);
+}
+.toast.err{background:var(--err);}
+.toast.out{animation:toastOut .18s var(--ease-in) forwards;}
+@keyframes toastIn{from{opacity:0;transform:translateY(6px) scale(.98);}to{opacity:1;transform:none;}}
+@keyframes toastOut{to{opacity:0;transform:translateY(4px) scale(.985);}}
+
+/* ============================================================
+   响应式：窄窗口 / 竖屏
+   ============================================================ */
+/* 宽屏横放：编辑卡片吸顶，滚动查看控制器时输入区仍在视野内 */
+@media (orientation:landscape) and (min-width:1001px){
+  .editor-card{position:sticky;top:0;align-self:start;}
+}
+/* 横屏：编辑卡片高度不超过视口，内容在编辑区内二级滚动，底部按钮始终在视野内 */
+@media (orientation:landscape){
+  .editor-card{max-height:calc(100dvh - 230px);}
+}
+@media (max-width:1180px){
+  .grid{grid-template-columns:minmax(0,1fr) 330px;}
+}
+@media (max-width:1000px){
+  .sidenav{width:164px;}
+  .grid{grid-template-columns:minmax(0,1fr);}
+  .workspace{padding:18px 20px 22px;}
+}
+@media (max-width:760px){
+  .sidenav{display:none;}
+  .brand-sub{display:none;}
+}
+
+/* 竖屏（手机/竖放的平板）：文字输入与确认固定在窗口下半部 */@media (orientation:portrait){
+  body{overflow:hidden;}
+  .appbar{height:46px;padding:0 10px;gap:8px;}
+  .brand-name{font-size:13.5px;}
+  .appbar-meta{display:none;}
+  .sidenav{display:none;}
+  .shell{height:calc(100dvh - 46px);}
+  .workspace{padding:14px 14px calc(var(--dock-h, 52dvh) + 18px);}
+  .page-head{padding-bottom:10px;margin-bottom:12px;}
+  .page-head h1{font-size:16px;}
+  .grid{grid-template-columns:minmax(0,1fr);}
+
+  .editor-card{
+    position:fixed;left:0;right:0;bottom:0;z-index:50;
+    height:min(52dvh,560px);min-height:296px;
+    margin:0;border-radius:14px 14px 0 0;border-bottom:none;
+    padding:12px 14px 0;
+    box-shadow:0 -10px 30px -18px rgba(20,32,52,.4);
+    animation:none;
+  }
+  /* 可拖动的小横条：轻点收起/展开，拖动可调整高度 */
+  .sheet-handle{
+    display:block;position:absolute;top:0;left:0;right:0;height:18px;
+    z-index:3;cursor:grab;touch-action:none;outline:none;
+  }
+  .sheet-handle::after{
+    content:"";position:absolute;top:6px;left:50%;transform:translateX(-50%);
+    width:44px;height:4px;border-radius:99px;background:var(--border-strong);
+  }
+  .sheet-handle:hover::after,.sheet-handle:active::after,.sheet-handle:focus-visible::after{
+    background:var(--text-3);
+  }
+  /* 轻点横条即切到「只露标题」的高度；拖动为无级调节，无吸附、无动画 */
+  .editor-card .card-head{padding-top:8px;margin-bottom:10px;flex-wrap:nowrap;overflow:hidden;}
+  .editor-card .card-head h2{font-size:14px;}
+  .editor-body{overflow-y:auto;gap:9px;}
+  textarea{min-height:92px;}
+  .editor-actions{margin:10px -14px 0;padding:10px 14px 12px;border-radius:0;}
+  #fb{max-height:172px;}
+  .controls-col{order:-1;}
+}
+
+/* 降低动态效果偏好 */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    animation-duration:.001ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:.001ms !important;
+    scroll-behavior:auto !important;
+  }
+}
+</style>
+<link rel="stylesheet" href="material.css">
+</head>
+<body>
+
+<!-- ==================== 品牌导航栏 ==================== -->
+<header class="appbar">
+  <div class="brand">
+    <span class="brand-logo">◧</span>
+    <span class="brand-name">墨水屏一体机</span>
+    <span class="brand-sub">文字直传</span>
+  </div>
+  <span class="appbar-status" id="connBadge"><span class="dot"></span><span id="connText">未连接</span></span>
+  <div class="appbar-right">
+    <span class="appbar-meta" id="appbarDevice">—</span>
+    <button class="tbtn" id="btnReconnect" disabled>重连</button>
+    <button class="tbtn tbtn-primary" id="btnConnect">连接墨水屏</button>
+  </div>
+</header>
+
+<div class="shell">
+
+  <!-- ==================== 侧边导航 ==================== -->
+  <aside class="sidenav">
+    <nav class="nav-scroll">
+      <div class="nav-group">
+        <div class="nav-label">创作</div>
+        <button class="nav-item active" data-target="editorCard"><span class="ico">✎</span>文字编辑</button>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">设备</div>
+        <button class="nav-item" data-target="infoCard"><span class="ico">▤</span>墨水屏信息</button>
+        <button class="nav-item" data-target="ctrlCard"><span class="ico">⚙</span>控制器</button>
+        <button class="nav-item" data-target="logCard"><span class="ico">≡</span>运行日志</button>
+      </div>
+    </nav>
+    <div class="nav-footer">
+      <label class="switch-row">
+        <span>断线自动重连</span>
+        <span class="switch"><input type="checkbox" id="autoReconnectSwitch" checked><i></i></span>
+      </label>
+      <div class="nav-hint" id="navHint">首次连接需在弹窗中选择 NRF- 设备</div>
+    </div>
+  </aside>
+
+  <!-- ==================== 主内容区 ==================== -->
+  <main class="workspace" id="workspace">
+
+    <div class="page-head">
+      <div>
+        <h1>文字直传</h1>
+        <p>输入文字即生成位图，一键上传到墨水屏，无需导出图片再导入。</p>
+      </div>
+      <span class="spacer"></span>
+      <div class="page-actions">
+        <button class="btn btn-soft" id="btnRefresh">不退出应用刷新</button>
+        <button class="btn btn-soft" id="btnPreview">刷新预览</button>
+      </div>
+    </div>
+
+    <div class="network-banner" id="networkBanner" role="status">正在检查网络 · 蓝牙可离线使用</div>
+    <div class="grid">
+
+      <!-- 左：文字输入与确认 -->
+      <section class="card editor-card" id="editorCard">
+        <div class="sheet-handle" id="sheetHandle" role="button" tabindex="0"
+             title="拖动调整高度，轻点收起/展开" aria-label="拖动调整编辑区高度，轻点收起或展开"></div>
+        <div class="card-head">
+          <h2>文字内容</h2>
+          <span class="hint" id="frameTag">400 × 300</span>
+          <span class="spacer"></span>
+          <div class="seg" id="alignSeg" title="对齐方式作用于标题；正文行始终从左侧留白处起排（与原页面一致）">
+            <button data-align="left" class="on">左对齐</button>
+            <button data-align="center">标题居中</button>
+            <button data-align="only">仅标题</button>
+          </div>
+        </div>
+
+        <div class="editor-body">
+          <div class="rss-bar">
+            <label class="switch-row" for="rssSwitch">
+              <span>RSS 自动填充（联网时）</span>
+              <span class="switch"><input type="checkbox" id="rssSwitch"><i></i></span>
+            </label>
+            <div class="rss-source" id="rssSource" hidden>
+              <input type="text" id="rssUrl" spellcheck="false" placeholder="https://example.com/rss.xml">
+              <button class="btn" id="btnRssFetch">拉取</button>
+            </div>
+            <div class="rss-status" id="rssStatus" hidden></div>
+          </div>
+
+          <div class="field">
+            <label class="flabel">标题<span class="fhint" id="titleHint">至多 6 个汉字</span></label>
+            <input type="text" id="titleInput" maxlength="6" placeholder="输入标题…" autocomplete="off">
+          </div>
+
+          <div class="field grow">
+            <label class="flabel">内容<span class="fhint">每行至多 24 个汉字 · 至多 6 行</span></label>
+            <textarea id="bodyInput" placeholder="每行一句，回车换行&#10;例如：&#10;今日待办&#10;扫码取件&#10;9:00 开会"></textarea>
+          </div>
+
+          <div class="line-styles" id="lineStyles"></div>
+
+          <div class="tools">
+            <label class="tool">抖动
+              <select id="algoSelect">
+                <option value="floyd">Floyd–Steinberg</option>
+                <option value="none">纯二值（不抖动）</option>
+                <option value="atkinson">Atkinson</option>
+                <option value="bayer">Bayer 网点</option>
+                <option value="stucki">Stucki</option>
+                <option value="jarvis">Jarvis</option>
+              </select>
+            </label>
+            <label class="tool">阈值
+              <input type="range" id="thresholdRange" min="30" max="220" step="1" value="125">
+            </label>
+            <label class="tool">方向
+              <select id="orientSelect">
+                <option value="0">0° 正向</option>
+                <option value="90">90° 顺时针</option>
+                <option value="180">180° 倒置</option>
+                <option value="270">270° 逆时针</option>
+              </select>
+            </label>
+            <label class="tool">屏幕
+              <select id="screenSelect" class="wide"></select>
+            </label>
+          </div>
+        </div>
+
+        <div class="editor-actions">
+          <div class="status-line">
+            <div class="progress" id="progress"><i id="progressBar"></i></div>
+            <span id="statusLine">未连接 · 输入文字后即可上传</span>
+          </div>
+          <button class="btn-pill" id="btnUpload">上传到墨水屏</button>
+        </div>
+      </section>
+
+      <!-- 右：信息 / 控制器 / 日志 -->
+      <div class="col-right controls-col">
+
+        <section class="card" id="infoCard">
+          <div class="card-head">
+            <h2>墨水屏信息</h2>
+            <span class="spacer"></span>
+            <span class="hint" id="modeTag">红黑白</span>
+          </div>
+          <div class="preview-box"><canvas id="fb" width="400" height="300"></canvas></div>
+          <div class="preview-meta"><span id="previewMeta">预览 · 400 × 300</span><span id="previewBytes">15,000 B × 2</span></div>
+          <div class="info-grid">
+            <div class="info-item"><div class="k">设备名称</div><div class="v" id="infoName">—</div></div>
+            <div class="info-item"><div class="k">连接状态</div><div class="v" id="infoState">未连接</div></div>
+            <div class="info-item"><div class="k">屏幕规格</div><div class="v" id="infoScreen">4.2 寸 400×300</div></div>
+            <div class="info-item"><div class="k">上次上传</div><div class="v" id="infoLast">—</div></div>
+          </div>
+        </section>
+
+        <section class="card" id="ctrlCard">
+          <div class="card-head"><h2>墨水屏控制器</h2><span class="spacer"></span><span class="hint">模式切换</span></div>
+
+          <div class="ctrl-group">
+            <div class="ctrl-title">显示模式</div>
+            <div class="chip-row">
+              <button class="chip accent" data-cmd="e100" data-refresh="1">图片模式</button>
+              <button class="chip" data-cmd="e102" data-refresh="1">时钟模式</button>
+              <button class="chip" data-cmd="e101" data-refresh="1">日历模式</button>
+            </div>
+          </div>
+
+          <div class="ctrl-group">
+            <div class="ctrl-title">屏幕效果</div>
+            <div class="chip-row">
+              <button class="chip" data-cmd="e4" data-refresh="1">换字体/配色</button>
+              <button class="chip" data-cmd="e3">黑白反色</button>
+              <button class="chip" data-cmd="e5">旋转 180°</button>
+              <button class="chip" data-cmd="E2">强制刷新</button>
+            </div>
+          </div>
+
+          <div class="ctrl-group">
+            <div class="ctrl-title">时间与休眠</div>
+            <div class="chip-row">
+              <button class="chip" id="btnSetTime">设为当前时间</button>
+              <button class="chip" id="btnSleepOn">开启休眠</button>
+              <button class="chip" id="btnSleepOff">关闭休眠</button>
+            </div>
+            <div class="sleep-row">
+              <span class="lbl">开始</span>
+              <input type="text" id="sleepFrom" value="0" inputmode="numeric" maxlength="2">
+              <span class="lbl">点</span>
+              <span class="sep">·</span>
+              <span class="lbl">结束</span>
+              <input type="text" id="sleepTo" value="0" inputmode="numeric" maxlength="2">
+              <span class="lbl">点</span>
+            </div>
+          </div>
+
+          <div class="ctrl-group">
+            <div class="ctrl-title">高级</div>
+            <div class="chip-row">
+              <button class="chip" id="btnLut">局刷校准</button>
+              <button class="chip" id="btnChePai">停车牌</button>
+            </div>
+            <div class="sleep-row">
+              <input type="text" id="lutInput" placeholder="LUT 01~f0" style="width:94px" maxlength="4">
+              <input type="text" id="cpInput" placeholder="号码" style="width:94px" maxlength="8">
+            </div>
+          </div>
+        </section>
+
+        <section class="card" id="logCard">
+          <div class="card-head"><h2>运行日志</h2><span class="spacer"></span>
+            <button class="btn" id="btnClearLog" style="height:28px;padding:0 10px;font-size:12px;">清空</button>
+          </div>
+          <div id="log"></div>
+        </section>
+
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script src="native-bridge.js"></script>
+<script src="material-ui.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
