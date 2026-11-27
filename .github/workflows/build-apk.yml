@@ -38,6 +38,7 @@ jobs:
         run: |
           mkdir -p deliverables
           cp app/build/outputs/apk/debug/app-debug.apk deliverables/InkScreen-RSS-1.0.0.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs deliverables/InkScreen-RSS-1.0.0.apk | tee deliverables/APK-SIGNATURE.txt
           cd deliverables
           sha256sum InkScreen-RSS-1.0.0.apk > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4

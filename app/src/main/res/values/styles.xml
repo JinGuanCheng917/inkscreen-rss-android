@@ -1,12 +1,12 @@
 <resources>
-    <style name="Theme.InkScreen" parent="Theme.Material3.Light.NoActionBar">
+    <style name="Theme.InkScreen.Base" parent="Theme.Material3.Light.NoActionBar">
         <item name="colorPrimary">#365E9D</item>
         <item name="colorSecondary">#535F70</item>
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:statusBarColor">#F9F9FF</item>
-        <item name="android:navigationBarColor">#F9F9FF</item>
-        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:navigationBarColor">#1B1B1F</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
+    <style name="Theme.InkScreen" parent="Theme.InkScreen.Base" />
 </resources>
