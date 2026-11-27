@@ -11,6 +11,7 @@ const records = new WeakMap();
 window.materialButtons = {
   mount() {
     document.querySelectorAll('button').forEach(old => {
+      if (old.classList.contains('utility-backdrop')) return;
       const host = document.createElement('span');
       host.className = 'mui-button-host';
       const attributes = Object.fromEntries(Array.from(old.attributes).filter(a => !['style', 'class', 'disabled', 'type'].includes(a.name)).map(a => [a.name, a.value]));

@@ -3,7 +3,6 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>墨水屏文字直传</title>
 <style>
 /* ============================================================
@@ -128,10 +127,10 @@ button{font-family:inherit;}
 /* ============================================================
    主体：侧边栏 + 内容区
    ============================================================ */
-.shell{display:flex;height:calc(100dvh - 48px);min-height:0;}
+.shell{--nav-width:182px;position:relative;display:flex;height:calc(100dvh - 48px);min-height:0;}
 
 .sidenav{
-  width:182px;flex:none;background:var(--sidebar);
+  width:var(--nav-width);flex:none;background:var(--sidebar);
   border-right:1px solid var(--border);
   display:flex;flex-direction:column;min-height:0;
 }
@@ -163,6 +162,20 @@ button{font-family:inherit;}
 .nav-item.active{background:var(--sel);color:var(--brand-700);font-weight:600;}
 .nav-item.active .ico{color:var(--brand);}
 .nav-item.active::before{height:16px;}
+.nav-item.utility-trigger::after{content:'›';margin-left:auto;font-size:18px;transition:transform .2s var(--ease-std);}
+.nav-item.utility-trigger[aria-expanded="true"]::after{transform:rotate(180deg);}
+.utility-backdrop{position:absolute;inset:0 0 0 var(--nav-width);z-index:55;border:0;padding:0;background:rgba(20,32,52,.12);cursor:default;}
+.utility-panel{
+  position:absolute;top:0;bottom:0;left:var(--nav-width);z-index:60;
+  width:390px;max-width:calc(100% - var(--nav-width));padding:18px 16px;
+  background:var(--bg);border-right:1px solid var(--border);box-shadow:var(--sh-pop);
+  overflow-y:auto;overscroll-behavior:contain;
+}
+.utility-panel[hidden],.utility-backdrop[hidden],.utility-panel .card[hidden]{display:none !important;}
+.utility-panel .card{animation:none;}
+.utility-panel #log{height:min(460px,60dvh);min-height:180px;}
+.utility-panel .panel-close{width:28px;height:28px;padding:0;flex:none;font-size:19px;line-height:1;}
+.page-actions .mobile-utility{display:none;}
 .nav-footer{
   flex:none;padding:10px 12px 12px;border-top:1px solid var(--border);
   display:flex;flex-direction:column;gap:8px;
@@ -200,7 +213,7 @@ button{font-family:inherit;}
 .page-head h1{font-size:17px;font-weight:600;letter-spacing:.2px;}
 .page-head p{font-size:12.5px;color:var(--text-2);margin-top:3px;}
 .page-head .spacer{flex:1;}
-.page-actions{display:flex;gap:8px;}
+.page-actions{display:flex;flex-wrap:wrap;gap:8px;}
 
 /* ============================================================
    卡片
@@ -298,8 +311,10 @@ button{font-family:inherit;}
   /* 二级滚动条：编辑区被拖矮时在内部滚动，不与底部动作条重叠 */
   overflow-y:auto;overflow-x:hidden;padding-right:2px;
 }
-.field{display:flex;flex-direction:column;gap:6px;min-height:0;}
-.field.grow{flex:1;}
+/* 保留各区块的内容高度；空间不足时由编辑区滚动，避免文字框与行样式重叠。 */
+.editor-body > *{flex-shrink:0;}
+.field{display:flex;flex-direction:column;gap:6px;min-height:min-content;}
+.field.grow{flex:1 0 auto;}
 .flabel{
   display:flex;align-items:baseline;gap:8px;
   font-size:12.5px;font-weight:600;color:var(--text-2);
@@ -361,7 +376,7 @@ input[type="range"]::-moz-range-thumb{width:13px;height:13px;border:1px solid va
 
 /* 底部动作条：普通流式页脚，不再浮在内容上 */
 .editor-actions{
-  flex:none;display:flex;align-items:center;gap:12px;
+  flex:none;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:7px 12px;
   margin:12px -18px -18px;padding:12px 18px 14px;
   background:var(--card);
   border-top:1px solid var(--border);
@@ -373,8 +388,8 @@ input[type="range"]::-moz-range-thumb{width:13px;height:13px;border:1px solid va
 .status-line{flex:1;min-width:0;font-size:12px;color:var(--text-2);}
 .status-line b{color:var(--text);font-weight:600;}
 .progress{
-  height:4px;border-radius:99px;background:#e2e8f0;overflow:hidden;
-  margin-bottom:7px;opacity:0;transition:opacity .24s var(--ease-std);
+  grid-column:1 / -1;width:100%;height:6px;border-radius:99px;background:#e2e8f0;overflow:hidden;
+  margin:0;opacity:0;transition:opacity .24s var(--ease-std);
 }
 .progress.show{opacity:1;}
 .progress > i{
@@ -482,12 +497,14 @@ input[type="range"]::-moz-range-thumb{width:13px;height:13px;border:1px solid va
   .grid{grid-template-columns:minmax(0,1fr) 330px;}
 }
 @media (max-width:1000px){
-  .sidenav{width:164px;}
+  .shell{--nav-width:164px;}
   .grid{grid-template-columns:minmax(0,1fr);}
   .workspace{padding:18px 20px 22px;}
 }
 @media (max-width:760px){
+  .shell{--nav-width:0px;}
   .sidenav{display:none;}
+  .page-actions .mobile-utility{display:inline-flex;}
   .brand-sub{display:none;}
 }
 
@@ -497,7 +514,8 @@ input[type="range"]::-moz-range-thumb{width:13px;height:13px;border:1px solid va
   .brand-name{font-size:13.5px;}
   .appbar-meta{display:none;}
   .sidenav{display:none;}
-  .shell{height:calc(100dvh - 46px);}
+  .shell{--nav-width:0px;height:calc(100dvh - 46px);}
+  .page-actions .mobile-utility{display:inline-flex;}
   .workspace{padding:14px 14px calc(var(--dock-h, 52dvh) + 18px);}
   .page-head{padding-bottom:10px;margin-bottom:12px;}
   .page-head h1{font-size:16px;}
@@ -552,7 +570,7 @@ input[type="range"]::-moz-range-thumb{width:13px;height:13px;border:1px solid va
   <div class="brand">
     <span class="brand-logo">◧</span>
     <span class="brand-name">墨水屏一体机</span>
-    <span class="brand-sub">文字直传</span>
+    <span class="brand-sub">Android · v1.0.1</span>
   </div>
   <span class="appbar-status" id="connBadge"><span class="dot"></span><span id="connText">未连接</span></span>
   <div class="appbar-right">
@@ -574,8 +592,8 @@ input[type="range"]::-moz-range-thumb{width:13px;height:13px;border:1px solid va
       <div class="nav-group">
         <div class="nav-label">设备</div>
         <button class="nav-item" data-target="infoCard"><span class="ico">▤</span>墨水屏信息</button>
-        <button class="nav-item" data-target="ctrlCard"><span class="ico">⚙</span>控制器</button>
-        <button class="nav-item" data-target="logCard"><span class="ico">≡</span>运行日志</button>
+        <button class="nav-item utility-trigger" data-panel="ctrlCard" aria-controls="ctrlCard" aria-expanded="false"><span class="ico">⚙</span>控制器</button>
+        <button class="nav-item utility-trigger" data-panel="logCard" aria-controls="logCard" aria-expanded="false"><span class="ico">≡</span>运行日志</button>
       </div>
     </nav>
     <div class="nav-footer">
@@ -583,126 +601,14 @@ input[type="range"]::-moz-range-thumb{width:13px;height:13px;border:1px solid va
         <span>断线自动重连</span>
         <span class="switch"><input type="checkbox" id="autoReconnectSwitch" checked><i></i></span>
       </label>
-      <div class="nav-hint" id="navHint">首次连接需在弹窗中选择 NRF- 设备</div>
+      <div class="nav-hint" id="navHint">首次连接需在弹窗中选择 NRF_ 或 NRF- 设备</div>
     </div>
   </aside>
 
-  <!-- ==================== 主内容区 ==================== -->
-  <main class="workspace" id="workspace">
-
-    <div class="page-head">
-      <div>
-        <h1>文字直传</h1>
-        <p>输入文字即生成位图，一键上传到墨水屏，无需导出图片再导入。</p>
-      </div>
-      <span class="spacer"></span>
-      <div class="page-actions">
-        <button class="btn btn-soft" id="btnRefresh">不退出应用刷新</button>
-        <button class="btn btn-soft" id="btnPreview">刷新预览</button>
-      </div>
-    </div>
-
-    <div class="network-banner" id="networkBanner" role="status">正在检查网络 · 蓝牙可离线使用</div>
-    <div class="grid">
-
-      <!-- 左：文字输入与确认 -->
-      <section class="card editor-card" id="editorCard">
-        <div class="sheet-handle" id="sheetHandle" role="button" tabindex="0"
-             title="拖动调整高度，轻点收起/展开" aria-label="拖动调整编辑区高度，轻点收起或展开"></div>
-        <div class="card-head">
-          <h2>文字内容</h2>
-          <span class="hint" id="frameTag">400 × 300</span>
-          <span class="spacer"></span>
-          <div class="seg" id="alignSeg" title="对齐方式作用于标题；正文行始终从左侧留白处起排（与原页面一致）">
-            <button data-align="left" class="on">左对齐</button>
-            <button data-align="center">标题居中</button>
-            <button data-align="only">仅标题</button>
-          </div>
-        </div>
-
-        <div class="editor-body">
-          <div class="rss-bar">
-            <label class="switch-row" for="rssSwitch">
-              <span>RSS 自动填充（联网时）</span>
-              <span class="switch"><input type="checkbox" id="rssSwitch"><i></i></span>
-            </label>
-            <div class="rss-source" id="rssSource" hidden>
-              <input type="text" id="rssUrl" spellcheck="false" placeholder="https://example.com/rss.xml">
-              <button class="btn" id="btnRssFetch">拉取</button>
-            </div>
-            <div class="rss-status" id="rssStatus" hidden></div>
-          </div>
-
-          <div class="field">
-            <label class="flabel">标题<span class="fhint" id="titleHint">至多 6 个汉字</span></label>
-            <input type="text" id="titleInput" maxlength="6" placeholder="输入标题…" autocomplete="off">
-          </div>
-
-          <div class="field grow">
-            <label class="flabel">内容<span class="fhint">每行至多 24 个汉字 · 至多 6 行</span></label>
-            <textarea id="bodyInput" placeholder="每行一句，回车换行&#10;例如：&#10;今日待办&#10;扫码取件&#10;9:00 开会"></textarea>
-          </div>
-
-          <div class="line-styles" id="lineStyles"></div>
-
-          <div class="tools">
-            <label class="tool">抖动
-              <select id="algoSelect">
-                <option value="floyd">Floyd–Steinberg</option>
-                <option value="none">纯二值（不抖动）</option>
-                <option value="atkinson">Atkinson</option>
-                <option value="bayer">Bayer 网点</option>
-                <option value="stucki">Stucki</option>
-                <option value="jarvis">Jarvis</option>
-              </select>
-            </label>
-            <label class="tool">阈值
-              <input type="range" id="thresholdRange" min="30" max="220" step="1" value="125">
-            </label>
-            <label class="tool">方向
-              <select id="orientSelect">
-                <option value="0">0° 正向</option>
-                <option value="90">90° 顺时针</option>
-                <option value="180">180° 倒置</option>
-                <option value="270">270° 逆时针</option>
-              </select>
-            </label>
-            <label class="tool">屏幕
-              <select id="screenSelect" class="wide"></select>
-            </label>
-          </div>
-        </div>
-
-        <div class="editor-actions">
-          <div class="status-line">
-            <div class="progress" id="progress"><i id="progressBar"></i></div>
-            <span id="statusLine">未连接 · 输入文字后即可上传</span>
-          </div>
-          <button class="btn-pill" id="btnUpload">上传到墨水屏</button>
-        </div>
-      </section>
-
-      <!-- 右：信息 / 控制器 / 日志 -->
-      <div class="col-right controls-col">
-
-        <section class="card" id="infoCard">
-          <div class="card-head">
-            <h2>墨水屏信息</h2>
-            <span class="spacer"></span>
-            <span class="hint" id="modeTag">红黑白</span>
-          </div>
-          <div class="preview-box"><canvas id="fb" width="400" height="300"></canvas></div>
-          <div class="preview-meta"><span id="previewMeta">预览 · 400 × 300</span><span id="previewBytes">15,000 B × 2</span></div>
-          <div class="info-grid">
-            <div class="info-item"><div class="k">设备名称</div><div class="v" id="infoName">—</div></div>
-            <div class="info-item"><div class="k">连接状态</div><div class="v" id="infoState">未连接</div></div>
-            <div class="info-item"><div class="k">屏幕规格</div><div class="v" id="infoScreen">4.2 寸 400×300</div></div>
-            <div class="info-item"><div class="k">上次上传</div><div class="v" id="infoLast">—</div></div>
-          </div>
-        </section>
-
-        <section class="card" id="ctrlCard">
-          <div class="card-head"><h2>墨水屏控制器</h2><span class="spacer"></span><span class="hint">模式切换</span></div>
+  <button class="utility-backdrop" id="utilityBackdrop" aria-label="收起工具面板" tabindex="-1" hidden></button>
+  <aside class="utility-panel" id="utilityPanel" aria-label="设备工具" hidden>
+        <section class="card" id="ctrlCard" hidden>
+          <div class="card-head"><h2>墨水屏控制器</h2><span class="spacer"></span><span class="hint">模式切换</span><button class="btn panel-close" data-close-panel aria-label="收起墨水屏控制器">×</button></div>
 
           <div class="ctrl-group">
             <div class="ctrl-title">显示模式</div>
@@ -754,12 +660,133 @@ input[type="range"]::-moz-range-thumb{width:13px;height:13px;border:1px solid va
           </div>
         </section>
 
-        <section class="card" id="logCard">
+        <section class="card" id="logCard" hidden>
           <div class="card-head"><h2>运行日志</h2><span class="spacer"></span>
-            <button class="btn" id="btnClearLog" style="height:28px;padding:0 10px;font-size:12px;">清空</button>
+            <button class="btn" id="btnClearLog" style="height:28px;padding:0 10px;font-size:12px;">清空</button><button class="btn panel-close" data-close-panel aria-label="收起运行日志">×</button>
           </div>
           <div id="log"></div>
         </section>
+  </aside>
+
+  <!-- ==================== 主内容区 ==================== -->
+  <main class="workspace" id="workspace">
+
+    <div class="page-head">
+      <div>
+        <h1>文字直传</h1>
+        <p>输入文字即生成位图，一键上传到墨水屏，无需导出图片再导入。</p>
+      </div>
+      <span class="spacer"></span>
+      <div class="page-actions">
+        <button class="btn btn-soft" id="btnRefresh">不退出应用刷新</button>
+        <button class="btn btn-soft mobile-utility utility-trigger" data-panel="ctrlCard" aria-controls="ctrlCard" aria-expanded="false">控制器</button>
+        <button class="btn btn-soft mobile-utility utility-trigger" data-panel="logCard" aria-controls="logCard" aria-expanded="false">运行日志</button>
+        <button class="btn btn-soft" id="btnPreview">刷新预览</button>
+      </div>
+    </div>
+
+    <div class="network-banner" id="networkBanner" role="status">正在检查网络 · 蓝牙可离线使用</div>
+    <div class="grid">
+
+      <!-- 左：文字输入与确认 -->
+      <section class="card editor-card" id="editorCard">
+        <div class="sheet-handle" id="sheetHandle" role="button" tabindex="0"
+             title="拖动调整高度，轻点收起/展开" aria-label="拖动调整编辑区高度，轻点收起或展开"></div>
+        <div class="card-head">
+          <h2>文字内容</h2>
+          <span class="hint" id="frameTag">400 × 300</span>
+          <span class="spacer"></span>
+          <div class="seg" id="alignSeg" title="对齐方式作用于标题；正文行始终从左侧留白处起排（与原页面一致）">
+            <button data-align="left" class="on">左对齐</button>
+            <button data-align="center">标题居中</button>
+            <button data-align="only">仅标题</button>
+          </div>
+        </div>
+
+        <div class="editor-body">
+          <div class="rss-bar">
+            <label class="switch-row" for="rssSwitch">
+              <span>从 RSS 自动填充</span>
+              <span class="switch"><input type="checkbox" id="rssSwitch"><i></i></span>
+            </label>
+            <div class="rss-source" id="rssSource" hidden>
+              <input type="text" id="rssUrl" spellcheck="false" placeholder="https://example.com/rss.xml">
+              <button class="btn" id="btnRssFetch">拉取</button>
+            </div>
+            <div class="rss-status" id="rssStatus" hidden></div>
+          </div>
+
+          <div class="field">
+            <label class="flabel">标题<span class="fhint" id="titleHint">至多 6 个汉字</span></label>
+            <input type="text" id="titleInput" maxlength="6" placeholder="输入标题…" autocomplete="off">
+          </div>
+
+          <div class="field grow">
+            <label class="flabel">内容<span class="fhint">每行至多 24 个汉字 · 至多 6 行</span></label>
+            <textarea id="bodyInput" placeholder="每行一句，回车换行&#10;例如：&#10;今日待办&#10;扫码取件&#10;9:00 开会"></textarea>
+          </div>
+
+          <div class="line-styles" id="lineStyles"></div>
+
+          <div class="tools">
+            <label class="tool">抖动
+              <select id="algoSelect">
+                <option value="floyd">Floyd–Steinberg</option>
+                <option value="none">纯二值（不抖动）</option>
+                <option value="atkinson">Atkinson</option>
+                <option value="bayer">Bayer 网点</option>
+                <option value="stucki">Stucki</option>
+                <option value="jarvis">Jarvis</option>
+              </select>
+            </label>
+            <label class="tool">阈值
+              <input type="range" id="thresholdRange" min="30" max="220" step="1" value="125">
+            </label>
+            <label class="tool">方向
+              <select id="orientSelect">
+                <option value="0">0° 正向</option>
+                <option value="90">90° 顺时针</option>
+                <option value="180">180° 倒置</option>
+                <option value="270">270° 逆时针</option>
+              </select>
+            </label>
+            <label class="tool">屏幕
+              <select id="screenSelect" class="wide"></select>
+            </label>
+          </div>
+        </div>
+
+        <div class="editor-actions">
+          <div class="progress" id="progress"><i id="progressBar"></i></div>
+          <div class="status-line">
+            <span id="statusLine">未连接 · 输入文字后即可上传</span>
+          </div>
+          <button class="btn-pill" id="btnUpload">上传到墨水屏</button>
+        </div>
+      </section>
+
+      <!-- 右：预览与设备信息 -->
+      <div class="col-right controls-col">
+
+        <section class="card" id="infoCard">
+          <div class="card-head">
+            <h2>墨水屏信息</h2>
+            <span class="spacer"></span>
+            <span class="hint" id="modeTag">红黑白</span>
+          </div>
+          <div class="preview-box"><canvas id="fb" width="400" height="300"></canvas></div>
+          <div class="preview-meta"><span id="previewMeta">预览 · 400 × 300</span><span id="previewBytes">15,000 B × 2</span></div>
+          <div class="info-grid">
+            <div class="info-item"><div class="k">设备名称</div><div class="v" id="infoName">—</div></div>
+            <div class="info-item"><div class="k">连接状态</div><div class="v" id="infoState">未连接</div></div>
+            <div class="info-item"><div class="k">屏幕规格</div><div class="v" id="infoScreen">4.2 寸 400×300</div></div>
+            <div class="info-item"><div class="k">上次上传</div><div class="v" id="infoLast">—</div></div>
+          </div>
+        </section>
+
+
+
+
 
       </div>
     </div>

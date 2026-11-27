@@ -37,10 +37,12 @@ jobs:
       - name: Prepare APK and checksum
         run: |
           mkdir -p deliverables
-          cp app/build/outputs/apk/debug/app-debug.apk deliverables/InkScreen-RSS-1.0.0.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs deliverables/InkScreen-RSS-1.0.0.apk | tee deliverables/APK-SIGNATURE.txt
+          cp app/build/outputs/apk/debug/app-debug.apk deliverables/InkScreen-RSS-1.0.1.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs deliverables/InkScreen-RSS-1.0.1.apk | tee deliverables/APK-SIGNATURE.txt
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging deliverables/InkScreen-RSS-1.0.1.apk > deliverables/APK-METADATA.txt
+          node -e 'require("node:fs").writeFileSync("deliverables/BUILD-INFO.json", JSON.stringify({version:"1.0.1",versionCode:2,package:"com.inkscreen.rss",commit:process.env.GITHUB_SHA,run:process.env.GITHUB_RUN_ID},null,2))'
           cd deliverables
-          sha256sum InkScreen-RSS-1.0.0.apk > SHA256SUMS.txt
+          sha256sum InkScreen-RSS-1.0.1.apk > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
           name: InkScreen-RSS-APK

@@ -12,7 +12,7 @@ body { display:flex; flex-direction:column; background:var(--bg); }
 .card { border:0; padding:20px; box-shadow:none; }
 .editor-card { min-height:0!important; max-height:none!important; height:auto!important; position:static!important; border-radius:24px; margin:0; }
 .sheet-handle { display:none!important; }
-.editor-body { overflow:visible; gap:14px; }
+.editor-body { overflow:visible; gap:14px; flex:none; }
 .editor-actions { margin:16px -20px -20px; padding:16px 20px; border-radius:0 0 24px 24px; flex-wrap:wrap; }
 .editor-card.compact .editor-actions { display:flex; }
 .controls-col { order:initial!important; }
@@ -44,6 +44,9 @@ button.btn-pill.MuiButton-root { min-height:48px; color:#fff; }
 .switch i::after { top:3px; left:3px; height:20px; width:20px; }
 .switch input:checked+i::after { transform:translateX(18px); }
 .tools .tool { flex-wrap:wrap; }
+.utility-panel .panel-close.MuiButton-root { min-width:44px; width:44px; padding:0; }
+.utility-panel .card { padding:16px; }
+.page-actions { min-width:0; }
 #fb { max-height:250px; }
 #log { height:170px; }
 @media (orientation:portrait) { .workspace { padding:16px; } .editor-card { padding:18px; } .editor-actions { margin:16px -18px -18px; padding:16px 18px; } }

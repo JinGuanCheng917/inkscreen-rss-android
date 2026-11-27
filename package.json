@@ -1,6 +1,6 @@
 {
   "name": "inkscreen-rss-android",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "scripts": {
     "build:web": "node tools/build-web.mjs",
@@ -13,5 +13,8 @@
     "react": "19.2.0",
     "react-dom": "19.2.0"
   },
-  "devDependencies": { "esbuild": "0.25.12", "playwright": "1.56.1" }
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "playwright": "1.56.1"
+  }
 }

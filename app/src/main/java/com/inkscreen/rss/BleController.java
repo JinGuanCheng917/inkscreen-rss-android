@@ -25,6 +25,7 @@ import android.widget.ArrayAdapter;
 import androidx.appcompat.app.AlertDialog;
 import androidx.core.content.ContextCompat;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -39,6 +40,9 @@ final class BleController {
     private static final UUID EPD_CHAR = UUID.fromString("4b646063-6264-f3a7-8941-e65356ea82fe");
     private static final UUID CONTROL_SERVICE = UUID.fromString("00001f10-0000-1000-8000-00805f9b34fb");
     private static final UUID CONTROL_CHAR = UUID.fromString("00001f1f-0000-1000-8000-00805f9b34fb");
+    private static final UUID NRF_SERVICE = UUID.fromString("62750001-d828-918d-fb46-b6c11c675aec");
+    private static final UUID NRF_CHAR = UUID.fromString("62750002-d828-918d-fb46-b6c11c675aec");
+    private static final UUID NRF_VERSION_CHAR = UUID.fromString("62750003-d828-918d-fb46-b6c11c675aec");
     private static final UUID CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
     private final Activity activity;
     private final Handler main;
@@ -50,8 +54,9 @@ final class BleController {
     private BluetoothGattCharacteristic image, control;
     private BluetoothDevice device;
     private String connectId;
-    private boolean ready, scanning, closed;
-    private int mtu = 23;
+    private String protocol, configHex = "";
+    private boolean ready, scanning, closed, serviceDiscoveryStarted;
+    private int mtu = 23, version;
     private AlertDialog picker;
     private final List<BluetoothDevice> discovered = new ArrayList<>();
     private ArrayAdapter<String> names;
@@ -95,7 +100,7 @@ final class BleController {
             scanTimeout = () -> {
                 stopScan();
                 if (picker != null) picker.setTitle(discovered.isEmpty()
-                        ? "未发现 NRF- 设备，请确认设备开启后重试" : "扫描结束 · 请选择设备");
+                        ? "未发现 NRF_ 或 NRF- 设备，请确认设备开启后重试" : "扫描结束 · 请选择设备");
             };
             main.postDelayed(scanTimeout, 15000);
             selectionTimeout = () -> failConnect("timeout", "设备选择超时，请重新连接");
@@ -133,7 +138,7 @@ final class BleController {
         BluetoothDevice found = result.getDevice();
         String name = result.getScanRecord() == null ? null : result.getScanRecord().getDeviceName();
         if (name == null) name = found.getName();
-        if (name == null || !name.startsWith("NRF-") || discovered.contains(found)) return;
+        if (name == null || !(name.startsWith("NRF_") || name.startsWith("NRF-")) || discovered.contains(found)) return;
         discovered.add(found);
         names.add(name + "\n" + found.getAddress());
     }
@@ -172,22 +177,25 @@ final class BleController {
             discover(source);
         }); }
         @Override public void onServicesDiscovered(BluetoothGatt source, int status) { main.post(() -> {
-            if (source != gatt) return;
+            if (source != gatt || connectId == null) return;
             if (status != BluetoothGatt.GATT_SUCCESS) { failConnect("services", "发现蓝牙服务失败（" + status + "）"); return; }
-            BluetoothGattService service = source.getService(EPD_SERVICE);
-            image = service == null ? null : service.getCharacteristic(EPD_CHAR);
-            if (!writable(image)) { failConnect("services", "设备没有可写入的墨水屏图像通道"); return; }
-            BluetoothGattService controlService = source.getService(CONTROL_SERVICE);
-            control = controlService == null ? null : controlService.getCharacteristic(CONTROL_CHAR);
-            if (!writable(control)) control = null;
-            subscribe(source);
+            try { initializeServices(source); }
+            catch (Exception e) { failConnect("services", "初始化蓝牙服务失败：" + e.getMessage()); }
         }); }
         @Override public void onDescriptorWrite(BluetoothGatt source, BluetoothGattDescriptor descriptor, int status) { main.post(() -> {
             if (source == gatt && active != null && active.descriptor == descriptor) finishOperation(status == BluetoothGatt.GATT_SUCCESS ? null : "订阅通知失败（" + status + "）");
         }); }
         @Override public void onCharacteristicWrite(BluetoothGatt source, BluetoothGattCharacteristic characteristic, int status) { main.post(() -> {
-            if (source == gatt && active != null && active.characteristic == characteristic) finishOperation(status == BluetoothGatt.GATT_SUCCESS ? null : "蓝牙写入失败（" + status + "）");
+            if (source == gatt && active != null && active.onRead == null && active.characteristic == characteristic) finishOperation(status == BluetoothGatt.GATT_SUCCESS ? null : "蓝牙写入失败（" + status + "）");
         }); }
+        @Override public void onCharacteristicRead(BluetoothGatt source, BluetoothGattCharacteristic characteristic, byte[] value, int status) {
+            readValue(source, characteristic, value == null ? new byte[0] : value.clone(), status);
+        }
+        @SuppressWarnings("deprecation")
+        @Override public void onCharacteristicRead(BluetoothGatt source, BluetoothGattCharacteristic characteristic, int status) {
+            byte[] value = characteristic.getValue();
+            readValue(source, characteristic, value == null ? new byte[0] : value.clone(), status);
+        }
         @Override public void onCharacteristicChanged(BluetoothGatt source, BluetoothGattCharacteristic characteristic, byte[] value) {
             notifyValue(source, characteristic.getUuid(), value.clone());
         }
@@ -197,27 +205,88 @@ final class BleController {
             if (value != null) notifyValue(source, characteristic.getUuid(), value.clone());
         }
     };
+    private void initializeServices(BluetoothGatt source) {
+        String name = device.getName();
+        boolean nrfFirst = name != null && name.startsWith("NRF_EPD_");
+        UUID[] services = nrfFirst ? new UUID[]{NRF_SERVICE, EPD_SERVICE} : new UUID[]{EPD_SERVICE, NRF_SERVICE};
+        UUID[] characteristics = nrfFirst ? new UUID[]{NRF_CHAR, EPD_CHAR} : new UUID[]{EPD_CHAR, NRF_CHAR};
+        BluetoothGattService selected = null;
+        for (int i = 0; i < services.length; i++) {
+            BluetoothGattService candidate = source.getService(services[i]);
+            BluetoothGattCharacteristic channel = candidate == null ? null : candidate.getCharacteristic(characteristics[i]);
+            if (!writable(channel)) continue;
+            image = channel; selected = candidate;
+            protocol = services[i].equals(NRF_SERVICE) ? "nrf" : "legacy";
+            break;
+        }
+        if (image == null) { failConnect("services", "未找到兼容的墨水屏图像服务，请确认设备固件"); return; }
+        sink.event("log", "图像通道就绪（" + ("nrf".equals(protocol) ? "NRF_EPD" : "原版") + " 协议）");
+        if ("legacy".equals(protocol)) {
+            BluetoothGattService controlService = source.getService(CONTROL_SERVICE);
+            control = controlService == null ? null : controlService.getCharacteristic(CONTROL_CHAR);
+            if (!writable(control)) control = null;
+            subscribe(source);
+            return;
+        }
+        // Read the firmware version before enabling notifications, matching the web client.
+        BluetoothGattCharacteristic firmware = selected.getCharacteristic(NRF_VERSION_CHAR);
+        if (firmware == null || (firmware.getProperties() & BluetoothGattCharacteristic.PROPERTY_READ) == 0) {
+            sink.event("log", "无法读取固件版本，使用兼容传输模式");
+            subscribe(source);
+            return;
+        }
+        enqueue(new Operation(firmware, bytes -> {
+            if (bytes.length > 0) version = bytes[0] & 0xff;
+        }, error -> {
+            if (source != gatt || connectId == null) return;
+            sink.event("log", error == null && version != 0 ? "固件版本：0x" + Integer.toHexString(version) : "无法读取固件版本，使用兼容传输模式");
+            subscribe(source);
+        }));
+    }
+    private void readValue(BluetoothGatt source, BluetoothGattCharacteristic characteristic, byte[] value, int status) { main.post(() -> {
+        if (source != gatt || active == null || active.onRead == null || active.characteristic != characteristic) return;
+        if (status == BluetoothGatt.GATT_SUCCESS && value.length > 0) {
+            active.onRead.accept(value);
+            finishOperation(null);
+        } else finishOperation("读取固件版本失败（" + status + "）");
+    }); }
     private void notifyValue(BluetoothGatt source, UUID uuid, byte[] value) { main.post(() -> {
-        if (source == gatt && uuid.equals(EPD_CHAR)) sink.event("notification", hex(value));
+        if (source != gatt || image == null || !uuid.equals(image.getUuid())) return;
+        String data = hex(value);
+        if ("nrf".equals(protocol) && configHex.isEmpty() && value.length >= 8) {
+            String message = new String(value, StandardCharsets.UTF_8);
+            if (!message.startsWith("mtu=") && !message.startsWith("t=")) configHex = data;
+        }
+        sink.event("notification", data);
     }); }
     private void discover(BluetoothGatt source) {
+        if (source != gatt || connectId == null || serviceDiscoveryStarted) return;
+        serviceDiscoveryStarted = true;
         if (!source.discoverServices()) failConnect("services", "无法启动蓝牙服务发现");
     }
     private static boolean writable(BluetoothGattCharacteristic characteristic) {
         return characteristic != null && (characteristic.getProperties() & (BluetoothGattCharacteristic.PROPERTY_WRITE | BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE)) != 0;
     }
     private void subscribe(BluetoothGatt source) {
+        if (source != gatt || connectId == null || image == null) return;
         int properties = image.getProperties();
         BluetoothGattDescriptor descriptor = image.getDescriptor(CCCD);
         boolean indications = (properties & BluetoothGattCharacteristic.PROPERTY_NOTIFY) == 0 && (properties & BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0;
-        if (descriptor == null || (properties & (BluetoothGattCharacteristic.PROPERTY_NOTIFY | BluetoothGattCharacteristic.PROPERTY_INDICATE)) == 0) { connected(); return; }
+        if (descriptor == null || (properties & (BluetoothGattCharacteristic.PROPERTY_NOTIFY | BluetoothGattCharacteristic.PROPERTY_INDICATE)) == 0) {
+            if ("nrf".equals(protocol)) sink.event("log", "设备不提供通知，无法读取屏幕驱动；上传前请检查固件");
+            connected(); return;
+        }
         try {
-            if (!source.setCharacteristicNotification(image, true)) { sink.event("log", "通知订阅不可用，仍可传图"); connected(); return; }
+            if (!source.setCharacteristicNotification(image, true)) { sink.event("log", notificationWarning()); connected(); return; }
             enqueue(new Operation(descriptor, indications ? BluetoothGattDescriptor.ENABLE_INDICATION_VALUE : BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE, error -> {
-                if (error != null) sink.event("log", error);
+                if (source != gatt || connectId == null) return;
+                if (error != null) sink.event("log", notificationWarning() + "：" + error);
                 connected();
             }));
-        } catch (Exception e) { sink.event("log", "通知订阅失败，仍可传图"); connected(); }
+        } catch (Exception e) { sink.event("log", notificationWarning()); connected(); }
+    }
+    private String notificationWarning() {
+        return "nrf".equals(protocol) ? "通知订阅失败，无法读取屏幕驱动，请重新连接" : "通知订阅失败，仍可传图";
     }
     private void connected() {
         if (gatt == null || connectId == null) return;
@@ -227,6 +296,7 @@ final class BleController {
         String name = device.getName();
         preferences.edit().putString("address", device.getAddress()).putString("name", name == null ? "NRF 设备" : name).apply();
         sink.success(id, Json.object("id", device.getAddress(), "name", name == null ? "NRF 设备" : name,
+                "protocol", protocol, "version", version, "configHex", configHex,
                 "control", control != null, "maxPayload", Math.min(244, mtu - 3)));
     }
     void write(String id, String channel, String data) {
@@ -249,9 +319,11 @@ final class BleController {
         final BluetoothGattCharacteristic characteristic;
         final BluetoothGattDescriptor descriptor;
         final byte[] bytes;
+        final Consumer<byte[]> onRead;
         final Consumer<String> done;
-        Operation(BluetoothGattCharacteristic characteristic, byte[] bytes, Consumer<String> done) { this.characteristic = characteristic; this.descriptor = null; this.bytes = bytes; this.done = done; }
-        Operation(BluetoothGattDescriptor descriptor, byte[] bytes, Consumer<String> done) { this.characteristic = null; this.descriptor = descriptor; this.bytes = bytes; this.done = done; }
+        Operation(BluetoothGattCharacteristic characteristic, byte[] bytes, Consumer<String> done) { this.characteristic = characteristic; this.descriptor = null; this.bytes = bytes; this.onRead = null; this.done = done; }
+        Operation(BluetoothGattDescriptor descriptor, byte[] bytes, Consumer<String> done) { this.characteristic = null; this.descriptor = descriptor; this.bytes = bytes; this.onRead = null; this.done = done; }
+        Operation(BluetoothGattCharacteristic characteristic, Consumer<byte[]> onRead, Consumer<String> done) { this.characteristic = characteristic; this.descriptor = null; this.bytes = null; this.onRead = onRead; this.done = done; }
     }
     private void enqueue(Operation operation) {
         if (queue.size() >= 64) { operation.done.accept("蓝牙队列已满，请稍后再试"); return; }
@@ -268,7 +340,9 @@ final class BleController {
         main.postDelayed(operationTimeout, 12000);
         try {
             boolean accepted;
-            if (active.descriptor != null) {
+            if (active.onRead != null) {
+                accepted = gatt.readCharacteristic(active.characteristic);
+            } else if (active.descriptor != null) {
                 if (Build.VERSION.SDK_INT >= 33) accepted = gatt.writeDescriptor(active.descriptor, active.bytes) == BluetoothStatusCodes.SUCCESS;
                 else { active.descriptor.setValue(active.bytes); accepted = gatt.writeDescriptor(active.descriptor); }
             } else {
@@ -277,8 +351,8 @@ final class BleController {
                 if (Build.VERSION.SDK_INT >= 33) accepted = gatt.writeCharacteristic(active.characteristic, active.bytes, type) == BluetoothStatusCodes.SUCCESS;
                 else { active.characteristic.setWriteType(type); active.characteristic.setValue(active.bytes); accepted = gatt.writeCharacteristic(active.characteristic); }
             }
-            if (!accepted) finishOperation("系统拒绝蓝牙写入，请重试");
-        } catch (Exception e) { finishOperation("蓝牙写入失败：" + e.getMessage()); }
+            if (!accepted) finishOperation("系统拒绝蓝牙操作，请重试");
+        } catch (Exception e) { finishOperation("蓝牙操作失败：" + e.getMessage()); }
     }
     private void finishOperation(String error) {
         if (active == null) return;
@@ -307,6 +381,7 @@ final class BleController {
         if (operationTimeout != null) main.removeCallbacks(operationTimeout);
         BluetoothGatt previous = gatt;
         gatt = null; ready = false; image = null; control = null;
+        protocol = null; version = 0; configHex = ""; serviceDiscoveryStarted = false;
         List<Operation> aborted = new ArrayList<>();
         if (active != null) { aborted.add(active); active = null; }
         aborted.addAll(queue); queue.clear();

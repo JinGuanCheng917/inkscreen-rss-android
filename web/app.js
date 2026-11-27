@@ -1,4 +1,3 @@
-
 "use strict";
 /* ============================================================
    0. 常量
@@ -7,7 +6,11 @@ const EPD_SERVICE  = '13187b10-eba9-a3ba-044e-83d3217d9a38';
 const EPD_CHAR     = '4b646063-6264-f3a7-8941-e65356ea82fe';
 const RXTX_SERVICE = '00001f10-0000-1000-8000-00805f9b34fb';
 const RXTX_CHAR    = '00001f1f-0000-1000-8000-00805f9b34fb';
-const OPTIONAL_SERVICES = ['0000221f-0000-1000-8000-00805f9b34fb', RXTX_SERVICE, EPD_SERVICE];
+// NRF_EPD 协议定义：https://github.com/tsl0922/EPD-nRF5 (html/js/main.js, EPD/EPD_service.h)
+const NRF_SERVICE = '62750001-d828-918d-fb46-b6c11c675aec';
+const NRF_CHAR = '62750002-d828-918d-fb46-b6c11c675aec';
+const NRF_VERSION_CHAR = '62750003-d828-918d-fb46-b6c11c675aec';
+const OPTIONAL_SERVICES = ['0000221f-0000-1000-8000-00805f9b34fb', RXTX_SERVICE, EPD_SERVICE, NRF_SERVICE];
 
 /* 画布绘制字体：与原「墨水屏文字」页面完全一致，保证字形与度量不漂移 */
 const CANVAS_FONT = '-apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif';
@@ -67,10 +70,13 @@ const state = {
 
 /* BLE 运行时 */
 let bleDevice = null, gattServer = null, epdChar = null, rxtxChar = null;
+let bleProtocol = null, connectPromise = null, reconnectTimer = null;
+let nrfVersion = 0, nrfDriver = null, nrfRle = false, nrfExpectConfig = false;
 let connected = false, uploading = false, autoReconnect = true, reconnectTries = 0, composing = false;
 let rssOn = false;
-let rssLoading = false, rssRequestVersion = 0, reconnectTimer = null, connectionBusy = false, controlBusy = false;
-let nativeMaxPayload = 20, nativeConnectionTask = null;   /* RSS 开关不持久化，每次打开默认关闭 */
+let rssLoading = false, rssRequestVersion = 0, connectionBusy = false, controlBusy = false;
+let nativeMaxPayload = 20, nativeConnectionTask = null;
+let nativePendingNotifications = [];
 
 const $ = id => document.getElementById(id);
 const fb = $('fb');
@@ -118,10 +124,10 @@ function toast(msg, isErr){
   setTimeout(() => el.remove(), 2350);
 }
 
-function setStatusLine(html){ $('statusLine').innerHTML = html; }
 function escapeHtml(value){ return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function buttonDisabled(button, disabled){ window.materialButtons.update(typeof button === 'string' ? $(button) : button, {disabled}); }
 function buttonText(id, text){ window.materialButtons.update($(id), {text}); }
+function setStatusLine(html){ $('statusLine').innerHTML = html; }
 
 /* ============================================================
    2. 排版渲染（度量与「墨水屏文字」页面一致）
@@ -401,8 +407,9 @@ function updateConnectionUI(){
   buttonDisabled('btnConnect', uploading || connectionBusy || controlBusy);
   buttonDisabled('btnReconnect', !bleDevice || uploading || connectionBusy || controlBusy);
   buttonDisabled('btnUpload', !connected || uploading || connectionBusy || controlBusy);
-  ['btnSetTime','btnSleepOn','btnSleepOff','btnLut','btnChePai'].forEach(id => { buttonDisabled(id, !connected || !rxtxChar || uploading || connectionBusy || controlBusy); });
-  document.querySelectorAll('.chip[data-cmd]').forEach(b => { buttonDisabled(b, !connected || !rxtxChar || uploading || connectionBusy || controlBusy); });
+  buttonDisabled('btnSetTime', !connected || (!rxtxChar && bleProtocol !== 'nrf') || uploading || connectionBusy || controlBusy);
+  ['btnSleepOn','btnSleepOff','btnLut','btnChePai'].forEach(id => { buttonDisabled(id, !connected || !rxtxChar || uploading || connectionBusy || controlBusy); });
+  document.querySelectorAll('.chip[data-cmd]').forEach(b => { buttonDisabled(b, !connected || (bleProtocol === 'nrf' ? !['e100','e101','e102','e2'].includes(b.dataset.cmd.toLowerCase()) : !rxtxChar) || uploading || connectionBusy || controlBusy); });
   if (!uploading){
     setStatusLine(connected
       ? '已连接 <b>' + (bleDevice ? escapeHtml(bleDevice.name || '墨水屏') : '墨水屏') + '</b> · 输入文字后即可上屏'
@@ -413,25 +420,65 @@ function updateConnectionUI(){
 async function openGatt(){
   if (Native.available) return nativeConnect('connectLast');
   if (!bleDevice) throw new Error('没有选择设备');
+  if (connectPromise) return connectPromise;
   if (epdChar && gattServer && gattServer.connected){ connected = true; updateConnectionUI(); return; }
+  clearTimeout(reconnectTimer);
+  connectPromise = initializeGatt();
+  try { await connectPromise; }
+  catch (e){
+    connected = false; epdChar = null; rxtxChar = null; bleProtocol = null;
+    const server = gattServer; gattServer = null;
+    if (server && server.connected) server.disconnect();
+    updateConnectionUI();
+    throw e;
+  } finally { connectPromise = null; }
+}
+
+async function initializeGatt(){
+  epdChar = null; rxtxChar = null; bleProtocol = null;
+  nrfVersion = 0; nrfDriver = null; nrfRle = false; nrfExpectConfig = false;
 
   log('正在连接 ' + (bleDevice.name || '设备') + ' …');
   gattServer = await bleDevice.gatt.connect();
   log('GATT 已连接', 'ok');
 
-  const svc = await gattServer.getPrimaryService(EPD_SERVICE);
-  epdChar = await svc.getCharacteristic(EPD_CHAR);
-  log('图像通道就绪', 'ok');
+  // 固件名称不能决定协议，以实际可访问的服务和特征为准。
+  const profiles = [
+    { id: 'nrf', service: NRF_SERVICE, characteristic: NRF_CHAR },
+    { id: 'legacy', service: EPD_SERVICE, characteristic: EPD_CHAR }
+  ];
+  if (!/^NRF_EPD_/.test(bleDevice.name || '')) profiles.reverse();
+  let svc = null;
+  for (const profile of profiles){
+    try {
+      const candidate = await gattServer.getPrimaryService(profile.service);
+      const channel = await candidate.getCharacteristic(profile.characteristic);
+      if (!channel.properties.write && !channel.properties.writeWithoutResponse) throw new Error('图像通道不支持写入');
+      svc = candidate; epdChar = channel; bleProtocol = profile.id;
+      break;
+    } catch (e){
+      if (!e || e.name !== 'NotFoundError') throw e;
+    }
+  }
+  if (!epdChar) throw new Error('未找到兼容的墨水屏图像服务，请确认设备固件');
+  log('图像通道就绪（' + (bleProtocol === 'nrf' ? 'NRF_EPD' : '原版') + ' 协议）', 'ok');
+  if (bleProtocol === 'nrf'){
+    try {
+      const version = await svc.getCharacteristic(NRF_VERSION_CHAR);
+      nrfVersion = (await version.readValue()).getUint8(0);
+      nrfRle = nrfVersion >= 0x1a;
+      log('固件版本：0x' + nrfVersion.toString(16));
+    } catch (e){ log('无法读取固件版本，使用兼容传输模式'); }
+    nrfExpectConfig = true;
+  }
 
   try {
+    epdChar.removeEventListener('characteristicvaluechanged', onEpdNotification);
+    epdChar.addEventListener('characteristicvaluechanged', onEpdNotification);
     await epdChar.startNotifications();
-    epdChar.addEventListener('characteristicvaluechanged', ev => {
-      const n = parseInt(bytesToHex(ev.target.value.buffer) || '0', 16);
-      if (n) log('屏幕回应：已接收 ' + n + ' 字节');
-    });
-  } catch (e){ log('通知订阅失败（不影响传图）'); }
+  } catch (e){ log(bleProtocol === 'nrf' ? '通知订阅失败：无法读取屏幕驱动，请重新连接' : '通知订阅失败（不影响传图）', 'err'); }
 
-  try {
+  if (bleProtocol === 'legacy') try {
     const rsvc = await gattServer.getPrimaryService(RXTX_SERVICE);
     rxtxChar = await rsvc.getCharacteristic(RXTX_CHAR);
     log('控制通道就绪', 'ok');
@@ -440,46 +487,50 @@ async function openGatt(){
     log('控制通道不可用：模式切换会失败', 'err');
   }
 
+  if (!gattServer || !gattServer.connected) throw new Error('初始化期间蓝牙连接已断开');
   connected = true; reconnectTries = 0;
   updateConnectionUI();
   saveState();
 }
 
+function onEpdNotification(ev){
+  const value = ev.target.value;
+  const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  if (bleProtocol === 'nrf'){
+    const text = new TextDecoder().decode(bytes);
+    if (text.startsWith('mtu=') || text.startsWith('t=')){
+      if (text.startsWith('mtu=')) nrfRle = text.includes('rle=1');
+      log('设备回应：' + text);
+      return;
+    }
+    if (nrfExpectConfig && bytes.length >= 8){
+      nrfExpectConfig = false; nrfDriver = bytes[7];
+      log('已读取屏幕驱动：0x' + nrfDriver.toString(16));
+      return;
+    }
+    log('设备回应：' + text);
+  } else {
+    const n = parseInt(bytesToHex(bytes) || '0', 16);
+    if (n) log('屏幕回应：已接收 ' + n + ' 字节');
+  }
+}
+
 function onDisconnected(){
+  bleProtocol = null; nrfDriver = null; nrfVersion = 0; nrfExpectConfig = false;
   connected = false; epdChar = null; rxtxChar = null; gattServer = null;
   updateConnectionUI();
   log('连接已断开', 'err');
   scheduleReconnect();
 }
-function scheduleReconnect(){
-  if (!autoReconnect || !bleDevice || reconnectTries >= 6 || reconnectTimer) return;
-  reconnectTries++;
-  log('第 ' + reconnectTries + ' 次尝试重连…');
-  reconnectTimer = setTimeout(async () => {
-    reconnectTimer = null;
-    if (!autoReconnect) return;
-    try { await openGatt(); } catch(e){ log('重连未成功：' + e.message); scheduleReconnect(); }
-  }, 800 + reconnectTries * 700);
-}
-async function nativeConnect(method){
-  if (nativeConnectionTask) return nativeConnectionTask;
-  if (connected && method === 'connectLast') return;
-  clearTimeout(reconnectTimer); reconnectTimer = null;
-  connectionBusy = true; updateConnectionUI();
-  nativeConnectionTask = (async () => {
-    const info = await Native.call(method, {}, method === 'selectConnect' ? 180000 : 35000);
-    bleDevice = { id:info.id, name:info.name };
-    nativeMaxPayload = Math.max(20, Math.min(244, info.maxPayload || 20));
-    epdChar = {}; rxtxChar = info.control ? {} : null; gattServer = {connected:true};
-    connected = true; reconnectTries = 0;
-    log('已连接 ' + info.name + ' · 每包最多 ' + nativeMaxPayload + ' 字节', 'ok');
-    if (!info.control) log('控制通道不可用，仍可传图');
-  })();
-  try { return await nativeConnectionTask; }
-  finally { nativeConnectionTask = null; connectionBusy = false; updateConnectionUI(); }
-}
 
 async function attachDevice(dev){
+  clearTimeout(reconnectTimer);
+  if (connectPromise) await connectPromise.catch(() => {});
+  if (bleDevice){
+    bleDevice.removeEventListener('gattserverdisconnected', onDisconnected);
+    if (bleDevice !== dev && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
+  }
+  connected = false; epdChar = null; rxtxChar = null;
   bleDevice = dev;
   dev.addEventListener('gattserverdisconnected', onDisconnected);
   await openGatt();
@@ -496,16 +547,18 @@ async function pickAndConnect(){
     log('浏览器不支持 Web Bluetooth', 'err');
     return;
   }
+  let selected = false;
   try {
     buttonDisabled('btnConnect', true);
     const dev = await navigator.bluetooth.requestDevice({
-      filters: [{ namePrefix: 'NRF-' }],
+      filters: [{ namePrefix: 'NRF_' }, { namePrefix: 'NRF-' }],
       optionalServices: OPTIONAL_SERVICES
     });
+    selected = true;
     try { localStorage.setItem('epd.lastDevice', dev.id || dev.name || ''); } catch (e){}
     await attachDevice(dev);
   } catch (e){
-    if (e && e.name === 'NotFoundError') log('已取消选择设备');
+    if (!selected && e && e.name === 'NotFoundError') log('已取消选择设备');
     else {
       log('连接失败：' + (e && e.message ? e.message : e), 'err');
       toast('连接失败：' + (e && e.message ? e.message : e), true);
@@ -527,6 +580,7 @@ async function tryAutoConnect(){
     } catch(e){ if(e.code !== 'no_device'){ log(e.message); scheduleReconnect(); } }
     return;
   }
+
   if (!('bluetooth' in navigator)){ log('此浏览器不支持 Web Bluetooth'); return; }
   if (!autoReconnect){ log('已关闭自动重连'); return; }
   if (typeof navigator.bluetooth.getDevices !== 'function'){
@@ -539,7 +593,7 @@ async function tryAutoConnect(){
     let last = null;
     try { last = localStorage.getItem('epd.lastDevice'); } catch (e){}
     const dev = (last && list.find(d => d.id === last)) ||
-                list.find(d => (d.name || '').indexOf('NRF-') === 0) || list[0];
+                list.find(d => /^NRF[_-]/.test(d.name || '')) || list[0];
     if (!dev) return;
     log('发现已授权设备 ' + (dev.name || dev.id) + '，自动连接中…');
     await attachDevice(dev);
@@ -573,7 +627,6 @@ function hideProgress(){
   setTimeout(() => { $('progress').classList.remove('show'); $('progressBar').style.width = '0%'; }, 600);
 }
 
-function planeStepHex(){ return Native.available ? Math.max(2, (nativeMaxPayload - 4) * 2) : 480; }
 async function sendPlane(hexStr, type, onStep){
   const STEP = planeStepHex();
   const code = type === 'bwr' ? '00' : 'ff';
@@ -584,6 +637,53 @@ async function sendPlane(hexStr, type, onStep){
     await epdWrite(hexToBytes(cod + code + intToHex(i / 2, 2) + hexStr.substring(i, i + STEP)));
     if (onStep) onStep();
   }
+}
+
+// NRF_EPD 的数据包不使用原版协议的偏移地址，单包按最小 ATT MTU 发送。
+async function uploadNrfImage(cfg){
+  if (cfg.id.endsWith('small')) throw new Error('NRF_EPD 协议请使用完整屏幕规格上传');
+  const pixels = fb.getContext('2d').getImageData(0, 0, fb.width, fb.height).data;
+  const stride = Math.ceil(fb.width / 8);
+  const bw = new Uint8Array(stride * fb.height).fill(255);
+  const red = new Uint8Array(bw.length).fill(255);
+  for (let y = 0; y < fb.height; y++) for (let x = 0; x < fb.width; x++){
+    const p = (y * fb.width + x) * 4, offset = y * stride + (x >> 3), mask = 0x80 >> (x & 7);
+    if (pixels[p] === 0 && pixels[p + 1] === 0 && pixels[p + 2] === 0) bw[offset] &= ~mask;
+    else if (pixels[p] > 0 && pixels[p + 1] === 0 && pixels[p + 2] === 0) red[offset] &= ~mask;
+  }
+  let planes = cfg.planes.length > 1 ? [bw, red] : [bw];
+  const modern = nrfVersion >= 0x16;
+  if (nrfDriver === null) throw new Error('尚未读取到屏幕驱动，请重新连接');
+  if (modern && [0x08,0x09,0x0e,0x0f].includes(nrfDriver)){
+    const packed = new Uint8Array(bw.length * 4);
+    for (let i = 0; i < bw.length * 8; i += 2){
+      const color = bit => !(red[bit >> 3] & (0x80 >> (bit & 7))) ? 4 : !(bw[bit >> 3] & (0x80 >> (bit & 7))) ? 0 : 3;
+      packed[i >> 1] = (color(i) << 4) | color(i + 1);
+    }
+    planes = [packed];
+  }
+  await epdWrite(new Uint8Array([0x01])); // 使用设备已保存的驱动初始化。
+  await delay(200); // 等待固件报告传输标志格式。
+  const chunk = modern ? 18 : 19;
+  const total = planes.reduce((n, data) => n + Math.ceil(data.length / chunk), 0);
+  let step = 0;
+  for (let plane = 0; plane < planes.length; plane++){
+    let data = planes[plane];
+    if (!modern){
+      const cmd = plane === 0 ? (nrfDriver === 2 || nrfDriver === 4 ? 0x24 : cfg.planes.length > 1 ? 0x10 : 0x13) : nrfDriver === 2 ? 0x26 : 0x13;
+      if (plane === 1 && [2,5].includes(nrfDriver)) data = data.map(value => value ^ 255);
+      await epdWrite(new Uint8Array([0x03, cmd]));
+    }
+    for (let offset = 0; offset < data.length; offset += chunk){
+      const header = modern
+        ? [0x30, nrfRle ? plane | (offset === 0 ? 2 : 0) : (plane === 0 ? 0x0f : 0) | (offset === 0 ? 0 : 0xf0)]
+        : [0x04];
+      await epdWrite(new Uint8Array([...header, ...data.subarray(offset, offset + chunk)]));
+      step++; setProgress(step, total);
+      setStatusLine('正在上传 <b>' + Math.round(step / total * 100) + '%</b> · 请勿离开本页');
+    }
+  }
+  await epdWrite(new Uint8Array([0x05]));
 }
 
 async function uploadImage(){
@@ -601,6 +701,9 @@ async function uploadImage(){
   try {
     renderFramebuffer();
     const cfg = screen();
+    if (bleProtocol === 'nrf'){
+      await uploadNrfImage(cfg);
+    } else {
     const packFn = cfg.pack === 'rot' ? canvas2bytesRot : canvas2bytesRow;
     const perPlane = Math.ceil((cfg.w * cfg.h / 8) * 2 / planeStepHex());
     const totalSteps = perPlane * cfg.planes.length;
@@ -618,6 +721,7 @@ async function uploadImage(){
 
     await delay(300);
     await epdWrite(hexToBytes(cfg.finish));
+    }
     const secs = ((performance.now() - t0) / 1000).toFixed(1);
     log('上传完成，用时 ' + secs + ' 秒', 'ok');
     toast('已上传到墨水屏');
@@ -755,21 +859,22 @@ function enforceLimits(text){
 /* ============================================================
    9. 控制指令
    ============================================================ */
-function guardControl(action){
-  return async event => {
-    if (uploading || controlBusy || !connected) return;
-    controlBusy = true; updateConnectionUI();
-    try { await action(event); }
-    finally { controlBusy = false; updateConnectionUI(); }
-  };
-}
 async function sendModeCmd(hex, doRefresh){
+  if (bleProtocol === 'nrf'){
+    const cmd = hex.toLowerCase();
+    if (cmd === 'e2') await epdWrite(new Uint8Array([0x05]));
+    else if (['e100','e101','e102'].includes(cmd)) await syncNrfTime(parseInt(cmd.slice(-2), 16));
+    else throw new Error('NRF_EPD 固件不支持此控制指令');
+    log('指令 ' + hex + ' 已发送');
+    return;
+  }
   await rxWrite(hexToBytes(hex));
   if (doRefresh){ await delay(300); await rxWrite(hexToBytes('e2')); }
   log('指令 ' + hex + ' 已发送');
 }
 
 async function setTimeToNow(){
+  if (bleProtocol === 'nrf'){ await syncNrfTime(0); log('时间已同步', 'ok'); return; }
   const now = new Date();
   const unixNow = Math.round(Date.now() / 1000) - now.getTimezoneOffset() * 60;
   const payload = 'dd' + intToHex(unixNow, 4) + intToHex(now.getFullYear(), 2) +
@@ -780,23 +885,70 @@ async function setTimeToNow(){
   log('时间已设置为 ' + now.toLocaleString('zh-CN', { hour12: false }), 'ok');
 }
 
+async function syncNrfTime(mode){
+  const timestamp = Math.floor(Date.now() / 1000);
+  await epdWrite(new Uint8Array([0x20, timestamp >>> 24, timestamp >>> 16, timestamp >>> 8, timestamp,
+    -new Date().getTimezoneOffset() / 60, mode]));
+}
+
 function pad2(v){
   const n = clamp(parseInt(v, 10) || 0, 0, 99);
   return (n > 9 ? '' : '0') + n;
 }
 
 /* ============================================================
-   10. 侧边导航：滚动定位
+   10. 侧边导航：滚动定位与工具面板
    ============================================================ */
 function initNav(){
   const workspace = $('workspace');
-  const items = Array.prototype.slice.call(document.querySelectorAll('.nav-item'));
+  const items = Array.prototype.slice.call(document.querySelectorAll('.nav-item[data-target]'));
+  const triggers = Array.prototype.slice.call(document.querySelectorAll('.utility-trigger'));
+  const panels = [$('ctrlCard'), $('logCard')];
+  let currentItem = items.find(item => item.classList.contains('active')) || items[0];
+  let activePanel = null, opener = null;
+
+  function updateActive(){
+    items.forEach(item => item.classList.toggle('active', !activePanel && item === currentItem));
+    triggers.forEach(item => {
+      const expanded = item.dataset.panel === activePanel;
+      item.classList.toggle('active', expanded);
+      item.setAttribute('aria-expanded', String(expanded));
+    });
+  }
+  function closePanel(restoreFocus = true){
+    panels.forEach(panel => { panel.hidden = true; });
+    $('utilityPanel').hidden = true;
+    $('utilityBackdrop').hidden = true;
+    activePanel = null;
+    updateActive();
+    if (restoreFocus && opener) opener.focus({ preventScroll: true });
+    opener = null;
+  }
+  triggers.forEach(item => {
+    item.addEventListener('click', () => {
+      if (activePanel === item.dataset.panel){ closePanel(); return; }
+      activePanel = item.dataset.panel; opener = item;
+      panels.forEach(panel => { panel.hidden = panel.id !== activePanel; });
+      $('utilityPanel').hidden = false;
+      $('utilityBackdrop').hidden = false;
+      $('utilityPanel').scrollTop = 0;
+      updateActive();
+      $(activePanel).querySelector('[data-close-panel]').focus({ preventScroll: true });
+      if (activePanel === 'logCard') logBox.scrollTop = logBox.scrollHeight;
+    });
+  });
+  document.querySelectorAll('[data-close-panel]').forEach(button => button.addEventListener('click', () => closePanel()));
+  $('utilityBackdrop').addEventListener('click', () => closePanel());
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && activePanel){ event.preventDefault(); closePanel(); }
+  });
 
   items.forEach(item => {
     item.addEventListener('click', () => {
       const el = $(item.dataset.target);
       if (!el) return;
-      items.forEach(i => i.classList.toggle('active', i === item));
+      closePanel(false);
+      currentItem = item; updateActive();
       const top = el.getBoundingClientRect().top - workspace.getBoundingClientRect().top + workspace.scrollTop - 12;
       workspace.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
     });
@@ -814,7 +966,7 @@ function initNav(){
         const el = $(item.dataset.target);
         if (el && el.getBoundingClientRect().top <= base) current = item;
       });
-      items.forEach(i => i.classList.toggle('active', i === current));
+      currentItem = current; updateActive();
     });
   }, { passive: true });
 }
@@ -886,36 +1038,6 @@ function applyTitleLimit(on){
   $('titleHint').textContent = on ? 'RSS 标题可超过 6 字' : '至多 6 个汉字';
 }
 
-async function checkNetwork(){
-  try { return Native.available ? !!(await Native.call('network')).online : navigator.onLine !== false; }
-  catch { return false; }
-}
-function updateNetworkBanner(online){
-  if (typeof online === 'object') online = !!online.online;
-  $('networkBanner').textContent = online
-    ? '已联网 · 可刷新 RSS · 蓝牙可离线使用'
-    : '未联网 · 已跳过 RSS · 编辑与蓝牙仍可使用';
-  $('networkBanner').classList.toggle('offline', !online);
-}
-async function refreshInApp(){
-  saveState(); renderFramebuffer();
-  if (!rssOn){
-    updateNetworkBanner(await checkNetwork());
-    toast('预览已刷新 · RSS 自动填充已关闭');
-    return;
-  }
-  await loadRss();
-}
-async function readFeed(url){
-  if (Native.available) return (await Native.call('rss', {url}, 15000)).text;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
-  try {
-    const response = await fetch(url, {cache:'no-store', signal:controller.signal});
-    if (!response.ok) throw new Error('HTTP ' + response.status);
-    return await response.text();
-  } finally { clearTimeout(timer); }
-}
 async function loadRss(){
   if (rssLoading) return;
   const version = rssRequestVersion;
@@ -1227,7 +1349,7 @@ function init(){
   try { window.materialButtons.mount(); } catch(e){ console.error(e); }
   if (Native.available){
     Native.on('disconnected', onDisconnected);
-    Native.on('notification', hex => { const n = parseInt(hex || '0', 16); if(n) log('屏幕回应：已接收 ' + n + ' 字节'); });
+    Native.on('notification', nativeNotification);
     Native.on('log', msg => log(msg));
     Native.on('network', updateNetworkBanner);
   }
@@ -1243,7 +1365,7 @@ function init(){
   renderLineStyles();
   bindEvents();
   initNav();
-  // Android uses one continuous scroll layout to keep every control reachable.
+  // Android retains its continuous scroll layout so inputs remain reachable with the keyboard open.
   renderFramebuffer();
   updateConnectionUI();
   log('就绪。首次使用请点击「连接墨水屏」，之后可自动重连。');
@@ -1260,3 +1382,94 @@ function init(){
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
 else init();
+
+function guardControl(action){
+  return async event => {
+    if (uploading || controlBusy || !connected) return;
+    controlBusy = true; updateConnectionUI();
+    try { await action(event); }
+    finally { controlBusy = false; updateConnectionUI(); }
+  };
+}
+
+async function checkNetwork(){
+  try { return Native.available ? !!(await Native.call('network')).online : navigator.onLine !== false; }
+  catch { return false; }
+}
+
+function updateNetworkBanner(online){
+  if (typeof online === 'object') online = !!online.online;
+  $('networkBanner').textContent = online
+    ? '已联网 · 可刷新 RSS · 蓝牙可离线使用'
+    : '未联网 · 已跳过 RSS · 编辑与蓝牙仍可使用';
+  $('networkBanner').classList.toggle('offline', !online);
+}
+
+async function refreshInApp(){
+  saveState(); renderFramebuffer();
+  if (!rssOn){
+    updateNetworkBanner(await checkNetwork());
+    toast('预览已刷新 · RSS 自动填充已关闭');
+    return;
+  }
+  await loadRss();
+}
+
+async function readFeed(url){
+  if (Native.available) return (await Native.call('rss', {url}, 15000)).text;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(url, {cache:'no-store', signal:controller.signal});
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    return await response.text();
+  } finally { clearTimeout(timer); }
+}
+
+function scheduleReconnect(){
+  if (!autoReconnect || !bleDevice || reconnectTries >= 6 || reconnectTimer) return;
+  reconnectTries++;
+  log('第 ' + reconnectTries + ' 次尝试重连…');
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    if (!autoReconnect) return;
+    try { await openGatt(); } catch(e){ log('重连未成功：' + e.message); scheduleReconnect(); }
+  }, 800 + reconnectTries * 700);
+}
+
+function planeStepHex(){ return Native.available ? Math.max(2, (nativeMaxPayload - 4) * 2) : 480; }
+
+async function nativeConnect(method){
+  if (nativeConnectionTask) return nativeConnectionTask;
+  if (connected && method === 'connectLast') return;
+  clearTimeout(reconnectTimer); reconnectTimer = null;
+  connectionBusy = true; updateConnectionUI();
+  bleProtocol = null; nrfDriver = null; nrfVersion = 0; nrfRle = false; nrfExpectConfig = true;
+  nativePendingNotifications = [];
+  nativeConnectionTask = (async () => {
+    const info = await Native.call(method, {}, method === 'selectConnect' ? 180000 : 35000);
+    bleDevice = { id:info.id, name:info.name };
+    nativeMaxPayload = Math.max(20, Math.min(244, info.maxPayload || 20));
+    bleProtocol = info.protocol || 'legacy';
+    nrfVersion = info.version || 0; nrfRle = nrfVersion >= 0x1a; nrfExpectConfig = bleProtocol === 'nrf';
+    if (info.configHex) nativeNotification(info.configHex);
+    for (const hex of nativePendingNotifications) if (hex !== info.configHex) nativeNotification(hex);
+    nativePendingNotifications = [];
+    epdChar = {}; rxtxChar = info.control ? {} : null; gattServer = {connected:true};
+    connected = true; reconnectTries = 0;
+    log('图像通道就绪（' + (bleProtocol === 'nrf' ? 'NRF_EPD' : '原版') + ' 协议）', 'ok');
+    log('已连接 ' + info.name + ' · 每包最多 ' + nativeMaxPayload + ' 字节', 'ok');
+    if (!info.control && bleProtocol !== 'nrf') log('控制通道不可用，仍可传图');
+  })();
+  try { return await nativeConnectionTask; }
+  finally { nativeConnectionTask = null; connectionBusy = false; updateConnectionUI(); }
+}
+
+function nativeNotification(hex){
+  if (!bleProtocol){
+    if (connectionBusy && nativePendingNotifications.length < 64) nativePendingNotifications.push(hex);
+    return;
+  }
+  const bytes = hexToBytes(hex);
+  onEpdNotification({target:{value:new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength)}});
+}
