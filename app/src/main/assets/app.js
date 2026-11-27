@@ -52,7 +52,6 @@ const STYLES = [
 ];
 
 const STORE_KEY = 'epd.one.ui.v2';
-const DEFAULT_RSS = 'https://daily.juya.uk/rss.xml';
 
 const state = {
   title: '',
@@ -63,10 +62,14 @@ const state = {
   orient: 0,
   algo: 'floyd',
   threshold: 125,
-  rssUrl: DEFAULT_RSS,
-  rssEnabled: true,
+  rssSchema: 1,
+  rssSources: [],
+  rssSelectedId: '',
+  rssEnabled: false,
+  dynamicColors: true,
   autoReconnect: true
 };
+const FIXED_COLORS = {primary:'#365e9d',onPrimary:'#ffffff',primaryContainer:'#d7e3ff',onPrimaryContainer:'#001b3e',secondaryContainer:'#d7e3f7',onSecondaryContainer:'#101c2b',surface:'#f9f9ff',onSurface:'#1a1c20',surfaceVariant:'#e0e2ec',onSurfaceVariant:'#44474f',outline:'#74777f',background:'#f9f9ff'};
 
 /* BLE 运行时 */
 let bleDevice = null, gattServer = null, epdChar = null, rxtxChar = null;
@@ -827,6 +830,31 @@ function loadState(){
     Object.keys(state).forEach(k => {
       if (Object.prototype.hasOwnProperty.call(obj, k) && obj[k] !== null && obj[k] !== undefined) state[k] = obj[k];
     });
+    // Old releases silently supplied a built-in URL. Never migrate it as a user's source.
+    if (obj.rssSchema !== 1){
+      state.rssSources = []; state.rssSelectedId = ''; state.rssEnabled = false;
+      try {
+        const url = normalizeRssUrl(obj.rssUrl || '');
+        if (url !== 'https://daily.juya.uk/rss.xml'){
+          state.rssSources = [{id:'migrated', name:new URL(url).hostname, url}];
+          state.rssSelectedId = 'migrated';
+        }
+      } catch {}
+    }
+    const ids = new Set(), urls = new Set();
+    state.rssSources = (Array.isArray(state.rssSources) ? state.rssSources : []).flatMap(source => {
+      try {
+        if (!source || typeof source.id !== 'string' || !source.id || ids.has(source.id)) return [];
+        const url = normalizeRssUrl(source.url);
+        if (urls.has(url)) return [];
+        ids.add(source.id); urls.add(url);
+        return [{id:source.id, name:String(source.name || new URL(url).hostname).slice(0,60), url}];
+      } catch { return []; }
+    });
+    if (!state.rssSources.some(source => source.id === state.rssSelectedId)) state.rssSelectedId = '';
+    state.rssSchema = 1;
+    state.rssEnabled = state.rssEnabled === true;
+    state.dynamicColors = state.dynamicColors !== false;
   } catch (e){}
 }
 
@@ -837,11 +865,45 @@ function syncControls(){
   $('algoSelect').value = state.algo;
   $('orientSelect').value = String(state.orient);
   $('screenSelect').value = state.screenId;
-  $('rssUrl').value = state.rssUrl || DEFAULT_RSS;
+  renderRssSources();
   document.querySelectorAll('#alignSeg button').forEach(b => {
     b.classList.toggle('on', b.dataset.align === state.align);
   });
   $('bodyInput').disabled = state.align === 'only';
+}
+
+function applyTheme(info = {}){
+  const colors = {...FIXED_COLORS};
+  for (const key of Object.keys(colors)) if (/^#[0-9a-f]{6}$/i.test(info.colors?.[key])) colors[key] = info.colors[key];
+  const variables = {
+    '--brand':colors.primary, '--brand-600':colors.primary, '--brand-700':colors.primary,
+    '--on-primary':colors.onPrimary, '--sel':colors.primaryContainer, '--on-container':colors.onPrimaryContainer,
+    '--secondary-container':colors.secondaryContainer, '--on-secondary-container':colors.onSecondaryContainer,
+    '--bg':colors.background, '--card':colors.surface, '--card-white':colors.surface, '--sidebar':colors.surface,
+    '--surface-variant':colors.surfaceVariant, '--text':colors.onSurface, '--text-2':colors.onSurfaceVariant,
+    '--text-3':colors.onSurfaceVariant, '--border':colors.surfaceVariant, '--border-strong':colors.outline, '--outline':colors.outline
+  };
+  for (const [name,value] of Object.entries(variables)) document.documentElement.style.setProperty(name,value);
+  state.dynamicColors = info.enabled !== false;
+  $('dynamicColorSwitch').checked = state.dynamicColors;
+  document.documentElement.dataset.dynamicColor = state.dynamicColors && info.dynamicAvailable ? 'active' : 'fallback';
+  window.materialButtons?.setPalette(colors);
+  $('themeStatus').textContent = !state.dynamicColors ? '已关闭壁纸取色，使用固定 Material 配色。'
+    : info.dynamicAvailable ? '已开启 · 跟随系统壁纸配色；不改变墨水屏图像颜色。'
+    : '壁纸取色已开启；当前系统暂不提供动态色，使用固定 Material 配色。';
+  saveState();
+}
+async function syncTheme(enabled){
+  $('dynamicColorSwitch').disabled = true;
+  if (typeof enabled === 'boolean') state.dynamicColors = enabled;
+  try {
+    const info = Native.available ? await Native.call('theme', typeof enabled === 'boolean' ? {enabled} : {}, 5000)
+      : {enabled:state.dynamicColors, dynamicAvailable:false};
+    applyTheme(info);
+  } catch {
+    applyTheme({enabled:state.dynamicColors, dynamicAvailable:false});
+    $('themeStatus').textContent = '暂未取得系统壁纸配色，已使用固定 Material 配色。';
+  } finally { $('dynamicColorSwitch').disabled = false; }
 }
 
 /* 输入限制：与原「墨水屏文字」页面一致（标题 6 字、每行 15 字、最多 6 行） */
@@ -903,7 +965,7 @@ function initNav(){
   const workspace = $('workspace');
   const items = Array.prototype.slice.call(document.querySelectorAll('.nav-item[data-target]'));
   const triggers = Array.prototype.slice.call(document.querySelectorAll('.utility-trigger'));
-  const panels = [$('ctrlCard'), $('logCard')];
+  const panels = [$('rssCard'), $('ctrlCard'), $('logCard')];
   let currentItem = items.find(item => item.classList.contains('active')) || items[0];
   let activePanel = null, opener = null;
 
@@ -976,10 +1038,10 @@ function initNav(){
    ============================================================ */
 function rssPad(n){ return n < 10 ? '0' + n : String(n); }
 
-/* 标题格式：[月]-[日] AI早报 */
-function todayTitle(){
+/* 使用所选源名称，避免将任意订阅都标记成 AI 早报。 */
+function todayTitle(name){
   const d = new Date();
-  return (d.getMonth() + 1) + '-' + d.getDate() + ' AI早报';
+  return truncateTo((d.getMonth() + 1) + '-' + d.getDate() + ' ' + (name || 'RSS'), 40);
 }
 
 /* 单条超长按字数截断（按码点计，避免截断 emoji） */
@@ -995,13 +1057,20 @@ function cleanBullet(text){
 }
 
 function splitSummary(desc){
-  return String(desc || '').split(/[；;]/).map(cleanBullet).filter(s => s.length > 0);
+  const doc = inertFeedHtml(desc);
+  return (doc.body.textContent || '').split(/[；;\n]/).map(cleanBullet).filter(s => s.length > 0);
+}
+function inertFeedHtml(html){
+  // Keep arbitrary feed markup inert: never set untrusted HTML on a live-document element.
+  const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  doc.querySelectorAll('script,style,noscript,iframe,object').forEach(node => node.remove());
+  doc.querySelectorAll('br').forEach(node => node.replaceWith(doc.createTextNode('\n')));
+  return doc;
 }
 
 function bulletsFromContent(html){
   if (!html) return [];
-  const holder = document.createElement('div');
-  holder.innerHTML = html;
+  const holder = inertFeedHtml(html);
   return Array.prototype.map.call(holder.querySelectorAll('li'), li => cleanBullet(li.textContent))
     .filter(s => s.length > 0);
 }
@@ -1009,19 +1078,21 @@ function bulletsFromContent(html){
 function parseFeed(xmlText){
   const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
   if (doc.getElementsByTagName('parsererror').length) throw new Error('RSS 格式无法解析');
-  const items = Array.prototype.slice.call(doc.getElementsByTagName('item'));
-  if (!items.length) throw new Error('RSS 中没有条目');
+  let items = Array.from(doc.getElementsByTagNameNS('*', 'item'));
+  if (!items.length) items = Array.from(doc.getElementsByTagNameNS('*', 'entry'));
+  if (!items.length) throw new Error('RSS / Atom 中没有条目');
+  const textOf = (node, name) => node.getElementsByTagNameNS('*', name)[0]?.textContent.trim() || '';
 
   const latest = items[0];
-  const pubEl = latest.getElementsByTagName('pubDate')[0];
-  const issue = pubEl ? new Date(pubEl.textContent.trim()) : null;
+  const published = textOf(latest,'pubDate') || textOf(latest,'published') || textOf(latest,'updated');
+  const issue = published ? new Date(published) : null;
 
-  const encEl = latest.getElementsByTagName('content:encoded')[0];
-  let lines = bulletsFromContent(encEl ? encEl.textContent : '');
+  const content = textOf(latest,'encoded') || textOf(latest,'content') || textOf(latest,'description') || textOf(latest,'summary');
+  let lines = bulletsFromContent(content);
   if (!lines.length){
-    const descEl = latest.getElementsByTagName('description')[0];
-    lines = splitSummary(descEl ? descEl.textContent : '');
+    lines = splitSummary(content);
   }
+  if (!lines.length) lines = items.map(item => cleanBullet(textOf(item,'title'))).filter(Boolean);
   return { lines: lines, issue: issue };
 }
 
@@ -1032,6 +1103,50 @@ function setRssStatus(msg, kind){
   el.textContent = msg;
 }
 
+function normalizeRssUrl(value){
+  let url;
+  try { url = new URL(String(value || '').trim()); } catch { throw new Error('请输入有效的 HTTPS RSS 链接'); }
+  if (url.protocol !== 'https:' || !url.hostname || url.username || url.password || url.href.length > 2048)
+    throw new Error('请使用不含账号密码的 HTTPS RSS 链接');
+  url.hash = '';
+  return url.href;
+}
+function selectedRssSource(){ return state.rssSources.find(source => source.id === state.rssSelectedId); }
+function updateRssControls(){
+  for (const id of ['rssSource','rssName','rssUrl']) $(id).disabled = !rssOn;
+  buttonDisabled('btnRssSave', !rssOn);
+  buttonDisabled('btnRssNew', !rssOn);
+  buttonDisabled('btnRssDelete', !rssOn || !selectedRssSource());
+  buttonDisabled('btnRssFetch', !rssOn || !selectedRssSource() || rssLoading);
+}
+function renderRssSources(){
+  const select = $('rssSource');
+  select.replaceChildren(new Option('新建 RSS 源', ''));
+  state.rssSources.forEach(source => select.add(new Option(source.name + ' · ' + source.url, source.id)));
+  select.value = state.rssSelectedId;
+  const selected = selectedRssSource();
+  $('rssName').value = selected ? selected.name : '';
+  $('rssUrl').value = selected ? selected.url : '';
+  updateRssControls();
+}
+function saveRssSource(){
+  if (!rssOn) return;
+  try {
+    const url = normalizeRssUrl($('rssUrl').value);
+    const duplicate = state.rssSources.find(source => source.url === url && source.id !== state.rssSelectedId);
+    if (duplicate) throw new Error('该链接已保存，请从列表中选择已有源');
+    const name = $('rssName').value.trim().slice(0,60) || new URL(url).hostname;
+    let source = selectedRssSource();
+    if (source) Object.assign(source, {name,url});
+    else {
+      source = {id:'rss-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,9), name, url};
+      state.rssSources.push(source);
+    }
+    state.rssSelectedId = source.id; rssRequestVersion++;
+    saveState(); renderRssSources(); setRssStatus('已保存并选中「' + name + '」，点击「拉取」填充。', 'ok');
+  } catch (error){ setRssStatus(error.message + '；当前草稿和已保存源未改变。', 'err'); }
+}
+
 /* RSS 开启时标题可长于 6 字，关闭后恢复原限制 */
 function applyTitleLimit(on){
   $('titleInput').maxLength = on ? 40 : LIMITS.title;
@@ -1040,8 +1155,11 @@ function applyTitleLimit(on){
 
 async function loadRss(){
   if (rssLoading) return;
+  if (!rssOn){ setRssStatus('RSS 已关闭；当前文字不会自动替换。'); return; }
+  const source = selectedRssSource();
+  if (!source){ setRssStatus('请先添加并保存 RSS 源，然后选择要拉取的链接。'); return; }
   const version = rssRequestVersion;
-  const url = (($('rssUrl').value || '').trim()) || DEFAULT_RSS;
+  const {id, url} = source;
   const draft = {title:state.title, body:state.body};
   rssLoading = true;
   buttonDisabled('btnRssFetch', true);
@@ -1049,11 +1167,12 @@ async function loadRss(){
   try {
     const online = await checkNetwork();
     updateNetworkBanner(online);
+    if (!rssOn || version !== rssRequestVersion) return;
     if (!online){ setRssStatus('未联网，已跳过 RSS；可点击「不退出应用刷新」重试。'); log('未联网，跳过 RSS'); return; }
     if (!url.startsWith('https://')) throw new Error('请使用 HTTPS RSS 地址');
     setRssStatus('正在获取 RSS…');
     const parsed = parseFeed(await readFeed(url));
-    if (!rssOn || version !== rssRequestVersion || url !== (($('rssUrl').value || '').trim() || DEFAULT_RSS)) return;
+    if (!rssOn || version !== rssRequestVersion || selectedRssSource()?.id !== id || selectedRssSource()?.url !== url) return;
     if (state.title !== draft.title || state.body !== draft.body){
       setRssStatus('获取期间文字已修改，已保留编辑；如需填充 RSS，请再次刷新。');
       return;
@@ -1067,7 +1186,7 @@ async function loadRss(){
       if (rows.length >= LIMITS.rows) break;
     }
     if (!rows.length) throw new Error('RSS 中没有可用文字');
-    state.title = todayTitle(); state.body = rows.join('\n');
+    state.title = todayTitle(source.name); state.body = rows.join('\n');
     $('titleInput').value = state.title; $('bodyInput').value = state.body;
     renderLineStyles(); saveState(); scheduleRender();
     const issue = parsed.issue && !isNaN(parsed.issue.getTime()) ? parsed.issue.toLocaleDateString('zh-CN') : '最新一期';
@@ -1081,7 +1200,7 @@ async function loadRss(){
     updateNetworkBanner(await checkNetwork());
   } finally {
     rssLoading = false;
-    buttonDisabled('btnRssFetch', false);
+    updateRssControls();
     buttonDisabled('btnRefresh', false);
   }
 }
@@ -1325,20 +1444,31 @@ function bindEvents(){
   $('rssSwitch').addEventListener('change', e => {
     rssOn = e.target.checked;
     rssRequestVersion++; state.rssEnabled = rssOn; saveState();
-    $('rssSource').hidden = !rssOn;
-    $('rssStatus').hidden = !rssOn;
+    updateRssControls();
     applyTitleLimit(rssOn);
-    if (rssOn) loadRss();
-    else log('已关闭 RSS 自动填充');
+    setRssStatus(rssOn ? (selectedRssSource() ? '已开启，点击「拉取」获取所选源。' : '请添加并保存 RSS 源。') : 'RSS 已关闭；当前文字不会自动替换。');
   });
   $('btnRssFetch').addEventListener('click', loadRss);
-  $('rssUrl').addEventListener('change', () => {
-    state.rssUrl = ($('rssUrl').value || '').trim() || DEFAULT_RSS;
-    saveState();
+  $('rssSource').addEventListener('change', () => {
+    state.rssSelectedId = $('rssSource').value; rssRequestVersion++;
+    saveState(); renderRssSources();
+    setRssStatus(selectedRssSource() ? '已选择「' + selectedRssSource().name + '」，点击「拉取」获取。' : '填写链接后点击「保存源」。');
+  });
+  $('btnRssSave').addEventListener('click', saveRssSource);
+  $('btnRssNew').addEventListener('click', () => {
+    state.rssSelectedId = ''; rssRequestVersion++; saveState(); renderRssSources();
+    setRssStatus('填写新链接后点击「保存源」。'); $('rssUrl').focus();
+  });
+  $('btnRssDelete').addEventListener('click', () => {
+    const source = selectedRssSource(); if (!rssOn || !source) return;
+    state.rssSources = state.rssSources.filter(item => item.id !== source.id);
+    state.rssSelectedId = ''; rssRequestVersion++; saveState(); renderRssSources();
+    setRssStatus('已删除「' + source.name + '」。请选择其他源或添加新源。');
   });
   $('rssUrl').addEventListener('keydown', e => {
-    if (e.key === 'Enter'){ e.preventDefault(); state.rssUrl = ($('rssUrl').value || '').trim() || DEFAULT_RSS; saveState(); loadRss(); }
+    if (e.key === 'Enter'){ e.preventDefault(); saveRssSource(); }
   });
+  $('dynamicColorSwitch').addEventListener('change', () => syncTheme($('dynamicColorSwitch').checked));
 
   document.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); uploadImage(); }
@@ -1352,15 +1482,19 @@ function init(){
     Native.on('notification', nativeNotification);
     Native.on('log', msg => log(msg));
     Native.on('network', updateNetworkBanner);
+    Native.on('theme', applyTheme);
   }
   buildScreenOptions();
   loadState();
   autoReconnect = state.autoReconnect !== false;
   $('autoReconnectSwitch').checked = autoReconnect;
   syncControls();
-  rssOn = state.rssEnabled !== false;
+  rssOn = state.rssEnabled === true;
   $('rssSwitch').checked = rssOn;
-  $('rssSource').hidden = !rssOn;
+  updateRssControls();
+  if (rssOn && !selectedRssSource()) setRssStatus('请添加并保存 RSS 源。');
+  $('dynamicColorSwitch').checked = state.dynamicColors;
+  syncTheme();
   applyTitleLimit(rssOn);
   renderLineStyles();
   bindEvents();

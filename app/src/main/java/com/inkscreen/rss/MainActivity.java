@@ -4,12 +4,13 @@ import android.Manifest;
 import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothAdapter;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.content.res.Resources;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -22,7 +23,6 @@ import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.content.ContextCompat;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -31,18 +31,25 @@ import androidx.webkit.WebViewAssetLoader;
 import androidx.webkit.WebViewClientCompat;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
+import com.google.android.material.color.DynamicColors;
+import com.google.android.material.color.MaterialColors;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import org.json.JSONObject;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
-import java.util.Map;
+import java.util.Locale;
 
 public final class MainActivity extends AppCompatActivity implements Json.Sink {
     private static final String ORIGIN = "https://appassets.androidplatform.net";
     private static final String START_URL = ORIGIN + "/assets/index.html";
     private final Handler main = new Handler(Looper.getMainLooper());
     private WebView web;
+    private FrameLayout container;
+    private SharedPreferences appearance;
+    private Resources.Theme fixedTheme;
+    private boolean dynamicColorsEnabled;
+    private String lastTheme = "";
     private BleController ble;
     private RssFetcher rss;
     private JavaScriptReplyProxy reply;
@@ -71,14 +78,19 @@ public final class MainActivity extends AppCompatActivity implements Json.Sink {
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override protected void onCreate(Bundle state) {
+        appearance = getSharedPreferences("appearance", MODE_PRIVATE);
+        dynamicColorsEnabled = appearance.getBoolean("dynamicColors", true);
+        fixedTheme = getResources().newTheme();
+        fixedTheme.setTo(getTheme());
+        applyColorTheme();
         super.onCreate(state);
         ble = new BleController(this, main, this);
         rss = new RssFetcher(this, main, this);
         networks = getSystemService(ConnectivityManager.class);
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
-        FrameLayout container = new FrameLayout(this);
+        container = new FrameLayout(this);
         web = new WebView(this);
-        web.setBackgroundColor(0xfff9f9ff);
+        updateWindowColors();
         container.addView(web, new FrameLayout.LayoutParams(-1, -1));
         ViewCompat.setOnApplyWindowInsetsListener(container, (view, insets) -> {
             androidx.core.graphics.Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout() | WindowInsetsCompat.Type.ime());
@@ -144,6 +156,18 @@ public final class MainActivity extends AppCompatActivity implements Json.Sink {
             if (params == null) params = new JSONObject();
             switch (request.getString("method")) {
                 case "network": success(id, Json.object("online", rss.online())); break;
+                case "theme":
+                    if (params.has("enabled")) {
+                        Object enabled = params.get("enabled");
+                        if (!(enabled instanceof Boolean)) throw new IllegalArgumentException("主题开关参数无效");
+                        dynamicColorsEnabled = (Boolean) enabled;
+                        appearance.edit().putBoolean("dynamicColors", dynamicColorsEnabled).apply();
+                    }
+                    applyColorTheme();
+                    JSONObject theme = themeState();
+                    lastTheme = theme.toString();
+                    success(id, theme);
+                    break;
                 case "rss":
                     String url = params.getString("url");
                     if (url.length() > 2048) throw new IllegalArgumentException("RSS 地址过长");
@@ -164,9 +188,7 @@ public final class MainActivity extends AppCompatActivity implements Json.Sink {
         }
         pendingSelect = id;
         if (ble.permitted()) ensureBluetooth();
-        else permissions.launch(Build.VERSION.SDK_INT >= 31
-                ? new String[]{Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT}
-                : new String[]{Manifest.permission.ACCESS_FINE_LOCATION});
+        else permissions.launch(new String[]{Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT});
     }
     @SuppressLint("MissingPermission")
     private void ensureBluetooth() {
@@ -174,18 +196,71 @@ public final class MainActivity extends AppCompatActivity implements Json.Sink {
         else startSelection();
     }
     private void startSelection() {
-        if (Build.VERSION.SDK_INT <= 30) {
-            android.location.LocationManager locations = getSystemService(android.location.LocationManager.class);
-            boolean enabled = Build.VERSION.SDK_INT >= 28 ? locations.isLocationEnabled()
-                    : locations.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) || locations.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER);
-            if (!enabled) { finishSelection("location_off", "Android 8–11 扫描蓝牙需要开启系统定位开关；开启后请重新连接"); return; }
-        }
         String id = pendingSelect; pendingSelect = null;
         if (id != null) ble.select(id);
     }
     private void finishSelection(String code, String message) {
         String id = pendingSelect; pendingSelect = null;
         if (id != null) failure(id, code, message);
+    }
+    private void applyColorTheme() {
+        // Reapply the original theme in place so the switch never recreates WebView or BLE.
+        // Material 1.12 applies overlays with Theme.applyStyle(force=true). Reset the
+        // complete snapshot first to remove every previous dynamic-color attribute.
+        getTheme().setTo(fixedTheme);
+        android.view.Window window = getWindow();
+        android.view.View decor = window == null ? null : window.peekDecorView();
+        if (decor != null && decor.getContext() != this) {
+            decor.getContext().getTheme().setTo(fixedTheme);
+        }
+        if (dynamicColorsEnabled) DynamicColors.applyToActivityIfAvailable(this);
+        if (web != null) updateWindowColors();
+    }
+    private int themeColor(int attribute, int fallback) {
+        return MaterialColors.getColor(this, attribute, fallback);
+    }
+    private void updateWindowColors() {
+        int surface = themeColor(com.google.android.material.R.attr.colorSurface, 0xfff9f9ff);
+        web.setBackgroundColor(surface);
+        container.setBackgroundColor(surface);
+        getWindow().setStatusBarColor(surface);
+        getWindow().setNavigationBarColor(surface);
+        boolean light = MaterialColors.isColorLight(surface);
+        androidx.core.view.WindowInsetsControllerCompat bars = WindowCompat.getInsetsController(getWindow(), container);
+        bars.setAppearanceLightStatusBars(light);
+        bars.setAppearanceLightNavigationBars(light);
+    }
+    private String hexColor(int attribute, int fallback) {
+        return String.format(Locale.ROOT, "#%06X", themeColor(attribute, fallback) & 0xffffff);
+    }
+    private JSONObject themeState() {
+        return Json.object("enabled", dynamicColorsEnabled,
+                "dynamicAvailable", DynamicColors.isDynamicColorAvailable(),
+                "colors", Json.object(
+                        "primary", hexColor(com.google.android.material.R.attr.colorPrimary, 0xff365e9d),
+                        "onPrimary", hexColor(com.google.android.material.R.attr.colorOnPrimary, 0xffffffff),
+                        "primaryContainer", hexColor(com.google.android.material.R.attr.colorPrimaryContainer, 0xffd8e2ff),
+                        "onPrimaryContainer", hexColor(com.google.android.material.R.attr.colorOnPrimaryContainer, 0xff001a41),
+                        "secondaryContainer", hexColor(com.google.android.material.R.attr.colorSecondaryContainer, 0xffd7e3f7),
+                        "onSecondaryContainer", hexColor(com.google.android.material.R.attr.colorOnSecondaryContainer, 0xff101c2b),
+                        "surface", hexColor(com.google.android.material.R.attr.colorSurface, 0xfff9f9ff),
+                        "onSurface", hexColor(com.google.android.material.R.attr.colorOnSurface, 0xff1b1b1f),
+                        "surfaceVariant", hexColor(com.google.android.material.R.attr.colorSurfaceVariant, 0xffe1e2ec),
+                        "onSurfaceVariant", hexColor(com.google.android.material.R.attr.colorOnSurfaceVariant, 0xff44474f),
+                        "outline", hexColor(com.google.android.material.R.attr.colorOutline, 0xff74777f),
+                        "background", hexColor(android.R.attr.colorBackground, 0xfff9f9ff)));
+    }
+    @Override protected void onResume() {
+        super.onResume();
+        if (fixedTheme == null || destroyed) return;
+        // Android refreshes system color resources after wallpaper changes.
+        applyColorTheme();
+        JSONObject theme = themeState();
+        String current = theme.toString();
+        if (!lastTheme.equals(current)) {
+            lastTheme = current;
+            event("theme", theme);
+        }
     }
     private void networkChanged() { main.post(() -> { if (!destroyed) event("network", Json.object("online", rss.online())); }); }
     @Override public void success(String id, JSONObject result) { send(Json.object("id", id, "result", result)); }

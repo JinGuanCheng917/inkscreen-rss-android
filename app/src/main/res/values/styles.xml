@@ -1,11 +1,24 @@
 <resources>
     <style name="Theme.InkScreen.Base" parent="Theme.Material3.Light.NoActionBar">
         <item name="colorPrimary">#365E9D</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorPrimaryContainer">#D8E2FF</item>
+        <item name="colorOnPrimaryContainer">#001A41</item>
         <item name="colorSecondary">#535F70</item>
+        <item name="colorSecondaryContainer">#D7E3F7</item>
+        <item name="colorOnSecondaryContainer">#101C2B</item>
+        <item name="colorSurface">#F9F9FF</item>
+        <item name="colorOnSurface">#1B1B1F</item>
+        <item name="colorSurfaceVariant">#E1E2EC</item>
+        <item name="colorOnSurfaceVariant">#44474F</item>
+        <item name="colorOutline">#74777F</item>
+        <item name="android:colorBackground">#F9F9FF</item>
+        <item name="colorOnBackground">#1B1B1F</item>
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:statusBarColor">#F9F9FF</item>
-        <item name="android:navigationBarColor">#1B1B1F</item>
+        <item name="android:navigationBarColor">#F9F9FF</item>
+        <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
     <style name="Theme.InkScreen" parent="Theme.InkScreen.Base" />

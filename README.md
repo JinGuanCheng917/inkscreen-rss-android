@@ -1,48 +1,45 @@
-# 墨水屏一体机 · Android v1.0.1
+# 墨水屏一体机 · Android v1.0.2
 
-基于已在实机生产环境验证的 Android v1.0.0 项目，合入 2026-11-28 工作区最新版「墨水屏一体机-RSS.html」。本机不安装 Android SDK，使用 GitHub Actions 构建 APK。Material UI 和前端脚本均在本地打包，应用启动无需下载界面资源。
+基于 v1.0.1 增加多 RSS 源管理和 Material 壁纸动态取色，仅支持 Android 12（API 31）及以上。本机不安装 Android SDK，使用 GitHub Actions 云端编译。界面、Material UI 和脚本随应用离线打包。
 
-## v1.0.1 更新
+## 本版更新
 
-- Android 原生扫描和浏览器连接同时支持 NRF_、NRF- 名称前缀。
-- 依据实际可写的 GATT 特征识别 legacy / NRF_EPD 图像协议；NRF_EPD_ 名称优先检测 NRF 服务，仍兼容旧设备。
-- 原生读取固件版本、订阅并转发通知，缓存首次驱动配置，支持对应的旧版、现代和四色图像封包。没有读取到驱动配置时阻止 NRF 上传并给出提示。
-- NRF 设备的图片、日历、时钟、强制刷新与时间同步经正确图像通道发送；不支持的旧固件专属控制项禁用。
-- 控制器和运行日志默认隐藏，通过菜单或手机顶部按钮展开；支持关闭、遮罩和 Escape。
-- 同步最新网页的多行内容防挤压规则和加宽进度条。Android 沿用连续滚动编辑布局，手机键盘打开后仍可滚动访问输入项。
-- 保留无网跳过 RSS、错误保稿、草稿和开关持久化，以及“不退出应用刷新”。刷新不会重载网页或主动断开 BLE。
-- 保留按 MTU 分包、串行写入、重连次数限制、上传期间控制互斥及双平面快照一致性。
+- 桌面菜单和手机顶部新增 RSS 入口。首次安装默认关闭，无预置链接。开启后可以新建、命名、修改、保存、选择和删除多个 HTTPS 源。
+- 开关、链接及当前选择保存在本地。首次开启不自动请求；点击“拉取”获取已保存的所选源。保持开启后，启动或“不退出应用刷新”使用该源。未保存的表单不影响当前源。
+- 关闭 RSS、切换、修改或删除源时使旧请求失效。离线、失败、请求期间手动编辑时保留草稿。支持 RSS、Atom、HTML 摘要转纯文本及仅含标题的订阅。
+- 默认开启 Material 壁纸取色，原生弹窗、系统栏、WebView、CSS 与 MUI 按钮使用系统动态颜色。RSS 面板底部“界面配色”可关闭并记忆设置。系统不支持时回退固定 Material 配色。
+- 返回应用时重新同步调色板。切换颜色不会重载 WebView 或主动断开 BLE，不改变墨水屏画布黑、白、红像素。
+- minSdk 31，仅适配 Android 12+。移除旧版蓝牙和定位权限路径，扫描连接使用“附近设备”权限。
+
+## 保留功能
+
+沿用 v1.0.1 的 NRF_／NRF- 扫描、legacy／NRF_EPD 服务识别、版本与驱动读取、旧新固件及四色封包、按 MTU 分包、串行写入、断线重连、控制互斥和双平面快照。控制器和日志保留菜单抽屉；编辑区保留连续滚动与六行正文。
 
 ## 安装与升级
 
-支持 Android 8.0 及以上。版本号 1.0.1，versionCode 2，包名保持 com.inkscreen.rss。
+版本号 1.0.2，versionCode 3，包名 com.inkscreen.rss，最低 Android 12。Android 11 及以下无法安装。
 
-本项目构建的是可安装的 debug 测试 APK。v1.0.0 使用云端临时签名，本地未保存其私钥；v1.0.1 如与旧版签名不同，必须先卸载旧版再安装。卸载会清除草稿、RSS 地址、开关和设备记录。用户已选择保留原包名、卸载后安装的方式。请在卸载前保存需要的文字和设置。
-
-长期覆盖升级需要由应用所有者保管的固定签名；不要将签名私钥或访问凭据提交到源码仓库。当前仓库并不自动解决跨次云构建的签名连续性。
+当前是可安装的 debug 测试 APK，未配置跨次构建共用的固定私钥。请以本版签名校验记录为准；签名不同不能覆盖安装，按此前选择保留原包名、先卸载再安装。卸载会清除文字、RSS 设置及设备记录，请先保存需要的内容。正常退出、重启不会清除设置。后续持续覆盖升级需要由应用所有者保管固定签名。
 
 ## 使用
 
-1. 点击“连接墨水屏”，允许所需权限，选择 NRF_ 或 NRF- 开头的设备。Android 12+ 使用附近设备权限；Android 8–11 还需定位权限及系统定位开关。
-2. 按实际屏幕选择规格，编辑文字并查看预览，然后上传。NRF_EPD 使用完整屏幕规格，不使用 legacy 的日历小图规格。
-3. 使用顶部“控制器”“运行日志”（桌面也可使用左侧菜单）打开工具面板。不同协议可用的控制指令不同。
-4. 无网或 RSS 超时、HTTP 错误、XML 解析失败时保留当前草稿。联网后点击“不退出应用刷新”重试。
-5. 获取 RSS 时发生的手动编辑会被保留，不被迟到的结果覆盖。RSS 只支持 HTTPS，通过原生网络层获取。
+1. 连接墨水屏并允许附近设备权限，选择 NRF_ 或 NRF- 设备。
+2. 选择实际屏幕规格，编辑文字、预览并上传。NRF_EPD 使用完整屏幕规格，不使用 legacy 的日历小图规格。
+3. 打开 RSS 并启用，填写 HTTPS 链接和可选名称，点击“保存源”。用“新建”添加其他源，下拉选择一个已保存源，再点击“拉取”。
+4. 离线或失败保留草稿，联网后点击“不退出应用刷新”。保存后的链接才会用于拉取。
+5. 在 RSS 面板底部切换“Material 壁纸取色”。不支持动态色的系统保持可用的固定配色。
 
-传图时请保持应用前台。后台进程回收、设备固件差异和真实屏幕显示效果仍需设备验证。
+## 构建与验证
 
-## 构建
+npm ci、npm run build:web、npm test 可打包并验证前端。Windows 测试默认使用已安装 Chrome，可通过 PLAYWRIGHT_CHROMIUM_EXECUTABLE 指定浏览器。测试模拟原生桥，不能代替 Android 和 BLE 实机测试。
 
-运行 npm ci、npm run build:web、npm test 可打包并验证前端。Windows 测试默认使用已安装的 Chrome，也可通过 PLAYWRIGHT_CHROMIUM_EXECUTABLE 指定浏览器。
+GitHub Actions 的 Build installable APK 在 main/master 提交或手动执行时运行测试，然后使用 Java 17、Android SDK 35、AGP 8.9.2、Gradle 8.11.1 编译和 Lint，并验证 APK 签名和包信息。产物包括 InkScreen-RSS-1.0.2.apk、SHA256SUMS.txt、APK-SIGNATURE.txt、APK-METADATA.txt、BUILD-INFO.json。
 
-GitHub Actions 的 Build installable APK 工作流在 main/master 提交或手动运行时构建。先执行界面与协议测试，再在云端使用 Java 17、Android SDK 35、AGP 8.9.2、Gradle 8.11.1 编译和 Lint；产物 InkScreen-RSS-APK 包含 InkScreen-RSS-1.0.1.apk、SHA256SUMS.txt 和 APK-SIGNATURE.txt。
+## 目录
 
-## 项目结构
+- web/：界面源文件；app/src/main/assets/：build:web 生成的打包资源。
+- app/src/main/java/com/inkscreen/rss/：原生 BLE、权限、RSS、动态颜色和受限 WebView 桥。
+- tests/：界面、RSS、持久化、颜色和协议回归测试。
+- .github/workflows/：云构建及产物导出。
 
-- web/：界面源文件、离线 Material UI、原生 RPC 适配与图像协议。
-- app/src/main/assets/：通过 npm run build:web 生成的应用内资源。
-- app/src/main/java/com/inkscreen/rss/：原生 BLE、权限、RSS 请求和受限 WebView 桥。
-- tests/：模拟原生接口的浏览器回归测试，不等同于 BLE 实机验证。
-- .github/workflows/build-apk.yml：云端编译、Lint、签名验证和校验值生成。
-
-v1.0.0 的实机验证结论来自用户此前反馈，不能直接作为 v1.0.1 新增 NRF_EPD 协议的实机验证结论。当前版本具体测试结果随交付的验证记录提供。
+真实设备仍需验证壁纸调色板、系统权限弹窗、蓝牙通信和墨水屏显示。旧版实机反馈不能直接作为本版新增功能的实机结论。

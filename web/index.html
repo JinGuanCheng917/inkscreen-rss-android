@@ -570,7 +570,7 @@ input[type="range"]::-moz-range-thumb{width:13px;height:13px;border:1px solid va
   <div class="brand">
     <span class="brand-logo">◧</span>
     <span class="brand-name">墨水屏一体机</span>
-    <span class="brand-sub">Android · v1.0.1</span>
+    <span class="brand-sub">Android 12+ · v1.0.2</span>
   </div>
   <span class="appbar-status" id="connBadge"><span class="dot"></span><span id="connText">未连接</span></span>
   <div class="appbar-right">
@@ -588,6 +588,7 @@ input[type="range"]::-moz-range-thumb{width:13px;height:13px;border:1px solid va
       <div class="nav-group">
         <div class="nav-label">创作</div>
         <button class="nav-item active" data-target="editorCard"><span class="ico">✎</span>文字编辑</button>
+        <button class="nav-item utility-trigger" data-panel="rssCard" aria-controls="rssCard" aria-expanded="false"><span class="ico">◉</span>RSS</button>
       </div>
       <div class="nav-group">
         <div class="nav-label">设备</div>
@@ -607,6 +608,31 @@ input[type="range"]::-moz-range-thumb{width:13px;height:13px;border:1px solid va
 
   <button class="utility-backdrop" id="utilityBackdrop" aria-label="收起工具面板" tabindex="-1" hidden></button>
   <aside class="utility-panel" id="utilityPanel" aria-label="设备工具" hidden>
+        <section class="card" id="rssCard" hidden>
+          <div class="card-head"><h2>RSS 源</h2><span class="spacer"></span><button class="btn panel-close" data-close-panel aria-label="收起 RSS 源">×</button></div>
+          <label class="switch-row" for="rssSwitch">
+            <span>启用 RSS 自动填充</span>
+            <span class="switch"><input type="checkbox" id="rssSwitch"><i></i></span>
+          </label>
+          <p class="settings-hint">默认关闭，无预置源。开启后添加并保存 HTTPS 链接，选择一个源再拉取。重启会记住链接和选择；已开启时启动或应用内刷新会拉取所选源。</p>
+          <div class="rss-manager" id="rssManager">
+            <label class="field" for="rssSource"><span class="flabel">已保存的源</span><select id="rssSource"><option value="">新建 RSS 源</option></select></label>
+            <label class="field" for="rssName"><span class="flabel">名称<span class="fhint">选填</span></span><input type="text" id="rssName" maxlength="60" placeholder="例如：每日新闻" autocomplete="off"></label>
+            <label class="field" for="rssUrl"><span class="flabel">RSS 链接</span><input type="text" id="rssUrl" inputmode="url" spellcheck="false" maxlength="2048" placeholder="https://example.com/rss.xml" autocomplete="off"></label>
+            <div class="rss-actions">
+              <button class="btn btn-pill" id="btnRssSave">保存源</button>
+              <button class="btn" id="btnRssNew">新建</button>
+              <button class="btn" id="btnRssDelete">删除</button>
+              <button class="btn btn-pill" id="btnRssFetch">拉取</button>
+            </div>
+          </div>
+          <div class="rss-status" id="rssStatus" role="status">RSS 已关闭；当前文字不会自动替换。</div>
+          <div class="appearance-setting">
+            <h3>界面配色</h3>
+            <label class="switch-row" for="dynamicColorSwitch"><span>Material 壁纸取色</span><span class="switch"><input type="checkbox" id="dynamicColorSwitch" checked><i></i></span></label>
+            <p class="settings-hint" id="themeStatus" role="status">默认跟随系统壁纸配色；不改变墨水屏图像颜色。</p>
+          </div>
+        </section>
         <section class="card" id="ctrlCard" hidden>
           <div class="card-head"><h2>墨水屏控制器</h2><span class="spacer"></span><span class="hint">模式切换</span><button class="btn panel-close" data-close-panel aria-label="收起墨水屏控制器">×</button></div>
 
@@ -679,6 +705,7 @@ input[type="range"]::-moz-range-thumb{width:13px;height:13px;border:1px solid va
       <span class="spacer"></span>
       <div class="page-actions">
         <button class="btn btn-soft" id="btnRefresh">不退出应用刷新</button>
+        <button class="btn btn-soft mobile-utility utility-trigger" data-panel="rssCard" aria-controls="rssCard" aria-expanded="false">RSS</button>
         <button class="btn btn-soft mobile-utility utility-trigger" data-panel="ctrlCard" aria-controls="ctrlCard" aria-expanded="false">控制器</button>
         <button class="btn btn-soft mobile-utility utility-trigger" data-panel="logCard" aria-controls="logCard" aria-expanded="false">运行日志</button>
         <button class="btn btn-soft" id="btnPreview">刷新预览</button>
@@ -704,18 +731,6 @@ input[type="range"]::-moz-range-thumb{width:13px;height:13px;border:1px solid va
         </div>
 
         <div class="editor-body">
-          <div class="rss-bar">
-            <label class="switch-row" for="rssSwitch">
-              <span>从 RSS 自动填充</span>
-              <span class="switch"><input type="checkbox" id="rssSwitch"><i></i></span>
-            </label>
-            <div class="rss-source" id="rssSource" hidden>
-              <input type="text" id="rssUrl" spellcheck="false" placeholder="https://example.com/rss.xml">
-              <button class="btn" id="btnRssFetch">拉取</button>
-            </div>
-            <div class="rss-status" id="rssStatus" hidden></div>
-          </div>
-
           <div class="field">
             <label class="flabel">标题<span class="fhint" id="titleHint">至多 6 个汉字</span></label>
             <input type="text" id="titleInput" maxlength="6" placeholder="输入标题…" autocomplete="off">

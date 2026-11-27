@@ -34,7 +34,7 @@ import java.util.Locale;
 import java.util.UUID;
 import java.util.function.Consumer;
 
-@SuppressLint("MissingPermission") // All entry points check the version-specific runtime permissions.
+@SuppressLint("MissingPermission") // All entry points check Android 12+ nearby-device permissions.
 final class BleController {
     private static final UUID EPD_SERVICE = UUID.fromString("13187b10-eba9-a3ba-044e-83d3217d9a38");
     private static final UUID EPD_CHAR = UUID.fromString("4b646063-6264-f3a7-8941-e65356ea82fe");
@@ -70,8 +70,7 @@ final class BleController {
         adapter = activity.getSystemService(BluetoothManager.class).getAdapter();
     }
     boolean permitted() {
-        if (Build.VERSION.SDK_INT >= 31) return granted(Manifest.permission.BLUETOOTH_SCAN) && granted(Manifest.permission.BLUETOOTH_CONNECT);
-        return granted(Manifest.permission.ACCESS_FINE_LOCATION);
+        return granted(Manifest.permission.BLUETOOTH_SCAN) && granted(Manifest.permission.BLUETOOTH_CONNECT);
     }
     private boolean granted(String permission) { return ContextCompat.checkSelfPermission(activity, permission) == PackageManager.PERMISSION_GRANTED; }
     void select(String id) {

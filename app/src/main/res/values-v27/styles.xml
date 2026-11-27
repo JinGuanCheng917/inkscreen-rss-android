@@ -1,6 +1,0 @@
-<resources>
-    <style name="Theme.InkScreen" parent="Theme.InkScreen.Base">
-        <item name="android:navigationBarColor">#F9F9FF</item>
-        <item name="android:windowLightNavigationBar">true</item>
-    </style>
-</resources>
