@@ -2,6 +2,8 @@
 
 保留原网页的画布渲染、屏幕规格、图像协议与控制指令，通过 Android 原生 BLE 扫描和连接 NRF- 设备。
 
+2026-11-27 已在私人仓库 JinGuanCheng917/inkscreen-rss-android 完成云端构建。构建运行 46013234187 的 7 项界面测试、Android 编译、Lint 和 APK 签名验证均通过。应用源码提交为 03132c0fed2b8001a294d7b6c3c7c3074ae52423；之后增加的 export-apk 工作流只用于下载构建产物。
+
 ## 已实现
 
 - Android 8.0 及以上；Android 12+ 使用“附近设备”权限，Android 8–11 使用系统要求的定位权限和定位开关。
@@ -42,6 +44,6 @@
 
 ## 验证边界
 
-已验证前端离线行为、RSS 错误处理、应用内刷新、Material UI 按钮状态、20/244 字节通道容量下的传图内容和偏移。Android 编译结果须以 GitHub Actions 成功记录为准。BLE 扫描、系统权限弹窗、设备固件对分包的支持及真实刷新效果仍需手机和墨水屏实测。
+已验证前端离线行为、RSS 错误处理、应用内刷新、Material UI 按钮状态、20/244 字节通道容量下的传图内容和偏移。Android 编译及 Lint 已通过，Lint 有 8 项警告，主要涉及目标 SDK/依赖版本提醒、WebView 功能检查的静态分析提示、旧系统忽略的新权限属性和数据迁移规则。BLE 扫描、系统权限弹窗、设备固件对分包的支持及真实刷新效果仍需手机和墨水屏实测。
 
 依赖固定在 package-lock.json 与 Gradle 配置中。主要版本：Material UI 7.3.5、React 19.2.0、AGP 8.9.2、Gradle 8.11.1、Java 17、compile/target SDK 35。
